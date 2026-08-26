@@ -50,6 +50,24 @@ export function render(result: PreviewResult, container: HTMLElement, env: EnvAd
       const el = document.createElement(result.mediaType);
       if (result.src) el.src = result.src;
       container.appendChild(el);
+      if (result.metadata) {
+        const pre = document.createElement('pre');
+        pre.className = 'fp-meta';
+        pre.textContent = JSON.stringify(result.metadata, null, 2);
+        container.appendChild(pre);
+      }
+      break;
+    }
+    case 'table': {
+      // 与 renderToHtml 同源：tableToHtml 内部逐格 escapeHtml
+      container.innerHTML = tableToHtml(result.columns, result.rows);
+      break;
+    }
+    case 'tree': {
+      const pre = document.createElement('pre');
+      pre.className = 'fp-tree';
+      pre.textContent = JSON.stringify(result.nodes, null, 2);
+      container.appendChild(pre);
       break;
     }
     case 'binary': {

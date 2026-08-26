@@ -15,7 +15,10 @@ Thumbs.db
 .playwright-mcp/
 .workbuddy/
 
+# 本地生成的离线单文件页（build-standalone.mjs 产物）
+packages/core/examples/browser/verify-offline.html
+packages/core/examples/browser/demo-offline.html
+
 # 本地验证产物（e2e/浏览器截图证据；fixtures 资产除外）
 *-all-pass.png
 /fpk-e2e-*.png
-packages/core/examples/browser/verify-offline.html

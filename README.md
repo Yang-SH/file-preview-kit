@@ -54,7 +54,9 @@ node --experimental-strip-types packages/core/examples/node-ssr/smoke.ts
 # ① 静态伺服版（importmap + CDN 重库）：
 node packages/core/examples/browser/serve.mjs   # → http://localhost:4173/packages/core/examples/browser/verify-all.html
 # ② 离线单文件版（双击直接打开，file:// 协议；全部依赖本地内联，断网可用）：
-cd packages/core && npm run verify:offline       # → examples/browser/verify-offline.html
+cd packages/core && npm run verify:offline       # 同时生成两页：
+#    examples/browser/verify-offline.html —— 21 项自动断言
+#    examples/browser/demo-offline.html   —— 交互式演示台（16 种样例一键预览 + 拖拽任意文件）
 ```
 
 两页共用同一份断言模块 [`verify-cases.mjs`](./packages/core/examples/browser/verify-cases.mjs)，结果暴露在 `window.__FPK_VERIFY__` 供自动化消费。

@@ -66,7 +66,7 @@ async function bundle(entryFile) {
   return r.outputFiles[0].text;
 }
 
-const [coreSrc, pdfSrc, officeSrc, archiveSrc, browserRaw, workerSrc, casesSrc] = await Promise.all([
+const [coreSrc, pdfSrc, officeSrc, archiveSrc, browserRaw, workerSrc, casesSrc, demoAppSrc] = await Promise.all([
   bundle('dist/index.js'),
   bundle('../plugin-pdf/dist/index.js'),
   bundle('../plugin-office/dist/index.js'),
@@ -74,6 +74,7 @@ const [coreSrc, pdfSrc, officeSrc, archiveSrc, browserRaw, workerSrc, casesSrc] 
   bundle('dist/browser.js'),
   bundle('dist/worker.js'),
   bundle('examples/browser/verify-cases.mjs'),
+  bundle('examples/browser/demo-app.mjs'),
 ]);
 
 // ---------- 重库全量本地化（真离线的核心） ----------
@@ -103,9 +104,12 @@ if (!browserPatched.includes('__FPK_WORKER_URL__')) throw new Error('browser WOR
 const wasmDataUrl = 'data:application/wasm;base64,' + readFileSync(p('../../node_modules/mediainfo.js/dist/MediaInfoModule.wasm')).toString('base64');
 
 const html = buildHtml({ coreSrc, pdfSrc, officeSrc, archiveSrc, browserSrc: browserPatched, workerSrc, casesSrc, wasmDataUrl, vendored, pdfMainSrc, pdfWorkerSrc });
-
 writeFileSync(p('examples/browser/verify-offline.html'), html, 'utf8');
 console.log(`[standalone] 已生成 examples/browser/verify-offline.html (${(html.length / 1024 / 1024).toFixed(2)} MB)`);
+
+const demoHtml = buildDemoHtml({ coreSrc, pdfSrc, officeSrc, archiveSrc, browserSrc: browserPatched, workerSrc, demoAppSrc: casesSrc && demoAppSrc, wasmDataUrl, vendored, pdfMainSrc, pdfWorkerSrc });
+writeFileSync(p('examples/browser/demo-offline.html'), demoHtml, 'utf8');
+console.log(`[standalone] 已生成 examples/browser/demo-offline.html (${(demoHtml.length / 1024 / 1024).toFixed(2)} MB)`);
 
 function buildHtml(d) {
   const embed = (id, src) => `<script id="${id}" type="fpk/module">${src.replace(/<\/(script)/gi, '<\\/$1')}</script>`;
@@ -231,6 +235,102 @@ ${embed('fpk-src-pdfjs-worker', d.pdfWorkerSrc)}
   };
   wc.addEventListener('dragover', (e) => e.preventDefault());
   wc.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) wc.preview(f); });
+</script>
+</body>
+</html>`;
+}
+
+// ---------- 演示页（交互式 · 完全离线） ----------
+function buildDemoHtml(d) {
+  const embed = (id, src) => `<script id="${id}" type="fpk/module">${src.replace(/<\/(script)/gi, '<\\/$1')}</script>`;
+  return `<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>file-preview-kit 演示台（离线单文件 · 可直接双击打开）</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1024px; padding: 1.25rem; color: #1d2733; background: #f6f8fa; }
+  h1 { font-size: 1.3rem; margin: .2rem 0 .8rem; } small { color: #6b7785; font-weight: 400; }
+  #chips { display: flex; flex-wrap: wrap; gap: .45rem; margin: .75rem 0 1rem; }
+  .chip { border: 1px solid #c9d3de; background: #fff; border-radius: 999px; padding: .42rem .85rem; cursor: pointer; font-size: .9rem; }
+  .chip:hover { border-color: #4a7dbd; }
+  .chip.active { background: #2b6cb0; color: #fff; border-color: #2b6cb0; }
+  #dropzone { border: 2px dashed #b7c3cf; border-radius: 12px; padding: 1.1rem; text-align: center; color: #556; transition: .15s; background: #fff; }
+  #dropzone.drag { border-color: #2b6cb0; background: #eaf2fc; }
+  #meta { margin: .9rem 0 .4rem; font-size: .88rem; color: #333; min-height: 1.2em; }
+  .tag { display: inline-block; background: #e3ecf7; color: #2b6cb0; border-radius: 4px; padding: 0 .45em; margin-left: .35em; font-family: ui-monospace, monospace; font-size: .82rem; }
+  .tag.warn { background: #fdeaea; color: #c0392b; }
+  .dim { color: #8a94a0; }
+  #stage { background: #fff; border: 1px solid #dde4ec; border-radius: 10px; padding: 1rem; min-height: 260px; overflow: auto; max-height: 70vh; }
+  #stage img { max-width: 100%; border-radius: 6px; }
+  #stage table { border-collapse: collapse; } #stage td, #stage th { border: 1px solid #d6dde5; padding: .3rem .7rem; font-size: .9rem; }
+  #stage pre { white-space: pre-wrap; background: #f6f8fa; padding: .7rem; border-radius: 6px; overflow: auto; }
+  #stage iframe { width: 100%; height: 420px; border: 1px solid #dde4ec; border-radius: 6px; background: #fff; }
+  audio, video { width: 100%; }
+</style>
+</head>
+<body>
+<h1>file-preview-kit 演示台 <small>离线单文件 · 双击即开 · 点击下方样例或拖入任意本地文件</small></h1>
+
+<div id="chips"></div>
+
+<div id="dropzone">
+  <b>把文件拖到这里</b>，或点击选择：<input type="file" id="pick" />
+  <div class="dim" style="margin-top:.3rem;font-size:.82rem">支持 PNG/JPEG/SVG · TXT/MD/JSON/CSV/XML · PDF · DOCX/XLSX/PPTX · ZIP · WAV 音频 · EML 邮件；未知格式自动十六进制降级。</div>
+</div>
+
+<div id="meta"></div>
+<div id="stage"><span class="dim">预览输出区 —— 点击上方任一样例开始。</span></div>
+
+${embed('fpk-src-core', d.coreSrc)}
+${embed('fpk-src-pdf', d.pdfSrc)}
+${embed('fpk-src-office', d.officeSrc)}
+${embed('fpk-src-archive', d.archiveSrc)}
+${embed('fpk-src-demoapp', d.demoAppSrc)}
+<script id="fpk-wasm" type="fpk/data">${d.wasmDataUrl}</script>
+${Object.entries(d.vendored).map(([name, src]) => (src ? embed('fpk-vendor-' + name.replace(/[^a-z-]/g, ''), src) : '')).join('\n')}
+${embed('fpk-src-pdfjs-main', d.pdfMainSrc)}
+${embed('fpk-src-pdfjs-worker', d.pdfWorkerSrc)}
+
+<script>
+(function () {
+  function src(id) { return document.getElementById(id).textContent; }
+  var urls = {};
+  ['core', 'pdf', 'office', 'archive', 'demoapp'].forEach(function (n) {
+    urls[n] = URL.createObjectURL(new Blob([src('fpk-src-' + n)], { type: 'text/javascript' }));
+  });
+  window.__FPK_URLS__ = urls;
+  var imports = {
+    '@file-preview/core': urls.core,
+    '@file-preview/plugin-pdf': urls.pdf,
+    '@file-preview/plugin-office': urls.office,
+    '@file-preview/plugin-archive': urls.archive,
+  };
+  var vendorIds = ${JSON.stringify(Object.fromEntries(vendorNames.map((n) => [n, 'fpk-vendor-' + n.replace(/[^a-z-]/g, '')])))};
+  for (var lib in vendorIds) imports[lib] = URL.createObjectURL(new Blob([src(vendorIds[lib])], { type: 'text/javascript' }));
+  imports['pdfjs-dist'] = URL.createObjectURL(new Blob([src('fpk-src-pdfjs-main')], { type: 'text/javascript' }));
+  var im = document.createElement('script');
+  im.type = 'importmap';
+  im.textContent = JSON.stringify({ imports: imports });
+  document.head.appendChild(im);
+  window.__FPK_PDF_WORKER_URL__ = URL.createObjectURL(new Blob([src('fpk-src-pdfjs-worker')], { type: 'text/javascript' }));
+  window.__FPK_PDF_MODULE_URL__ = imports['pdfjs-dist'];
+})();
+</script>
+<script type="module">
+  const urls = window.__FPK_URLS__;
+  const core = await import(urls.core);
+  const pdfMod = await import(urls.pdf);
+  const officeMod = await import(urls.office);
+  const zipMod = await import(urls.archive);
+  const { initDemo } = await import(urls.demoapp);
+  await initDemo({
+    core, pdfMod, officeMod, zipMod,
+    wasmUrl: document.getElementById('fpk-wasm').textContent,
+    pdfModuleUrl: window.__FPK_PDF_MODULE_URL__,
+    pdfWorkerUrl: window.__FPK_PDF_WORKER_URL__,
+  });
 </script>
 </body>
 </html>`;
