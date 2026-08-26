@@ -1,5 +1,12 @@
 # @file-preview/plugin-archive
 
+## 0.3.1
+
+### Patch Changes
+
+- Updated dependencies [9e75b7b]
+  - @file-preview/core@0.4.0
+
 ## 0.3.0
 
 ### Minor Changes

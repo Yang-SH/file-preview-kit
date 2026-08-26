@@ -1,6 +1,6 @@
 {
   "name": "@file-preview/core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Isomorphic file-preview core: streaming IFile, detect, plugin router, env adapter, render",
   "main": "./src/index.ts",

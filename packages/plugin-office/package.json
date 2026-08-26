@@ -1,6 +1,6 @@
 {
     "name":  "@file-preview/plugin-office",
-    "version":  "0.3.0",
+    "version":  "0.4.0",
     "type":  "module",
     "description":  "Office (docx/xlsx/pptx) preview plugin for @file-preview/core",
     "main":  "./src/index.ts",
@@ -40,7 +40,7 @@
                          "fflate":  "^0.8.2"
                      },
     "peerDependencies":  {
-                             "@file-preview/core":  "^0.3.0"
+                             "@file-preview/core":  "^0.4.0"
                          },
     "devDependencies":  {
                             "@file-preview/core":  "*",
