@@ -681,3 +681,32 @@ npm@11.13.0 实测 **publishConfig 的 files/exports 字段替换不生效**（`
 ### 17.4 结论
 
 发布链路自此真实可用：`npm run release`（build→changeset publish）产出的 tarball 即正确形态。版本治理 P1 剩余仅 npm 凭据与实际发布动作。
+
+---
+
+## 十八、2026-08-26 完全离线浏览器验证台（file:// 双击即开 · 断网实证）
+
+### 18.1 能力
+
+`examples/browser/verify-offline.html`——单文件（9.68MB），**双击直接打开，无服务、无网络**：
+
+- 六个入口（core / 三插件 / browser / worker / 用例模块）经 esbuild 打包为自包含 blob 模块，运行时注入 importmap 互联；
+- 八个重库（fflate/papaparse/markdown-it/fast-xml-parser/emailjs-mime-parser/mammoth/exceljs/mediainfo.js）本地打包内联，bare specifier → 本地 blob（浏览器路径的 §16.5 边界②就此消解）；
+- pdfjs 官方双文件原样内联：主模块走 importmap，模块 Worker 以 blob URL 注入 `env.getAssetUrl` 链；
+- mediainfo WASM 以 data: URL 内联；§14 Web Component 默认集完整保留（WORKER_URL 支持宿主覆盖）。
+
+### 18.2 实证（Playwright Chromium + context.setOffline(true) 真断网）
+
+| 场景 | 结果 |
+|---|---|
+| file:// + 断网：21 项断言矩阵 | **21/21 通过** |
+| file:// + 断网：Web Component 渲染 PNG | ✅ Shadow DOM img(data:image/png) |
+
+### 18.3 边界（如实记录）
+
+- Worker 内不继承 importmap：含重库格式在 Worker 中触发「加载失败→主线程」降级（txt/md 纯管线可用）；pdfjs cMaps/standard_fonts 未内联，非嵌入字体 CJK PDF 渲染需另行托管。
+- 生成器依赖 esbuild（node_modules 提供），产物本身零依赖。
+
+### 18.4 结论
+
+「纯零构建场景重库解析」边界以离线单文件形态闭环；项目自此具备完全断网可用的浏览器全功能自证能力。

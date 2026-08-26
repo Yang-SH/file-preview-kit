@@ -11,11 +11,12 @@ import { zipSync } from 'fflate';
 const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38';
 
 export async function runVerifyCases(deps) {
-  const { core, pdfMod, officeMod, zipMod, wasmUrl, workerUrl } = deps;
+  const { core, pdfMod, officeMod, zipMod, wasmUrl, workerUrl, pdfModuleUrl, pdfWorkerUrl } = deps;
 
   const baseEnv = core.createBrowserEnv({
-    pdfModuleUrl: `${PDFJS}/build/pdf.mjs`,
-    pdfWorkerUrl: `${PDFJS}/build/pdf.worker.min.mjs`,
+    // 离线单文件版注入本地 blob；缺省回退 CDN drop-in（http 静态伺服版）
+    pdfModuleUrl: pdfModuleUrl ?? `${PDFJS}/build/pdf.mjs`,
+    pdfWorkerUrl: pdfWorkerUrl ?? `${PDFJS}/build/pdf.worker.min.mjs`,
     pdfFontsUrl: `${PDFJS}/standard_fonts/`,
   });
   const env = {

@@ -31,6 +31,23 @@ const CDN_LIBS = {
   'pdfjs-dist': 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs',
 };
 
+const CDN_FALLBACK_LIBS = {}; // 全量本地打包后此表为空；保留结构以便回退调试
+
+// 重库本地打包：browser 平台解析各包 browser 字段（exceljs→dist/exceljs.min.js、
+// mammoth→browser/unzip 等），输出自包含 ESM 文本，运行时映射为 blob 模块
+async function vendorBundle(libName) {
+  const r = await esbuild.build({
+    entryPoints: [libName],
+    bundle: true,
+    format: 'esm',
+    write: false,
+    logLevel: 'silent',
+    platform: 'browser',
+    external: ['module', 'url', 'path', 'fs', 'node:module', 'node:path', 'node:url', 'node:fs'],
+  });
+  return r.outputFiles[0].text;
+}
+
 async function bundle(entryFile) {
   const r = await esbuild.build({
     entryPoints: [p(entryFile)],
@@ -59,6 +76,22 @@ const [coreSrc, pdfSrc, officeSrc, archiveSrc, browserRaw, workerSrc, casesSrc] 
   bundle('examples/browser/verify-cases.mjs'),
 ]);
 
+// ---------- 重库全量本地化（真离线的核心） ----------
+const vendorNames = ['fflate', 'papaparse', 'markdown-it', 'fast-xml-parser', 'emailjs-mime-parser', 'mammoth', 'exceljs', 'mediainfo.js'];
+const vendored = {};
+for (const name of vendorNames) {
+  try {
+    vendored[name] = await vendorBundle(name);
+  } catch (e) {
+    console.warn(`[standalone] ⚠️ ${name} 本地打包失败，回退 CDN：${e.message}`);
+    vendored[name] = null;
+  }
+}
+
+// pdfjs 官方双文件原样内联（主模块 + 模块 Worker），不做二次打包
+const pdfMainSrc = readFileSync(p('../../node_modules/pdfjs-dist/build/pdf.min.mjs'), 'utf8');
+const pdfWorkerSrc = readFileSync(p('../../node_modules/pdfjs-dist/build/pdf.worker.min.mjs'), 'utf8');
+
 // browser 入口补丁：WORKER_URL 允许被宿主覆盖（单文件场景由 bootstrap 注入 blob worker）
 let browserPatched = browserRaw.replace(
   /(var|let|const) WORKER_URL = ([^;]+);/,
@@ -69,7 +102,7 @@ if (!browserPatched.includes('__FPK_WORKER_URL__')) throw new Error('browser WOR
 // wasm 内联（data URL；emscripten 对 data:/非流式响应自动走 ArrayBuffer 实例化）
 const wasmDataUrl = 'data:application/wasm;base64,' + readFileSync(p('../../node_modules/mediainfo.js/dist/MediaInfoModule.wasm')).toString('base64');
 
-const html = buildHtml({ coreSrc, pdfSrc, officeSrc, archiveSrc, browserSrc: browserPatched, workerSrc, casesSrc, wasmDataUrl });
+const html = buildHtml({ coreSrc, pdfSrc, officeSrc, archiveSrc, browserSrc: browserPatched, workerSrc, casesSrc, wasmDataUrl, vendored, pdfMainSrc, pdfWorkerSrc });
 
 writeFileSync(p('examples/browser/verify-offline.html'), html, 'utf8');
 console.log(`[standalone] 已生成 examples/browser/verify-offline.html (${(html.length / 1024 / 1024).toFixed(2)} MB)`);
@@ -96,7 +129,7 @@ function buildHtml(d) {
 </style>
 </head>
 <body>
-<h1>file-preview-kit 全功能验证台 <small>离线单文件版 · 双击直接打开（重库经 CDN，需联网）</small></h1>
+<h1>file-preview-kit 全功能验证台 <small>离线单文件版 · 双击直接打开 · 全部依赖已本地内联（完全离线可用）</small></h1>
 <div id="summary">运行中…</div>
 
 <section>
@@ -119,6 +152,9 @@ ${embed('fpk-src-browser', d.browserSrc)}
 ${embed('fpk-src-worker', d.workerSrc)}
 ${embed('fpk-src-cases', d.casesSrc)}
 <script id="fpk-wasm" type="fpk/data">${d.wasmDataUrl}</script>
+${Object.entries(d.vendored).map(([name, src]) => (src ? embed('fpk-vendor-' + name.replace(/[^a-z-]/g, ''), src) : '')).join('\n')}
+${embed('fpk-src-pdfjs-main', d.pdfMainSrc)}
+${embed('fpk-src-pdfjs-worker', d.pdfWorkerSrc)}
 
 <script>
 (function () {
@@ -135,12 +171,18 @@ ${embed('fpk-src-cases', d.casesSrc)}
     '@file-preview/plugin-archive': urls.archive,
     'fpk:cases': urls.cases,
   };
-  for (var lib in ${JSON.stringify(CDN_LIBS)}) imports[lib] = ${JSON.stringify(CDN_LIBS)}[lib];
+  // 重库全量本地化：bare specifier → 本地打包的 blob 模块（零网络）
+  var vendorIds = ${JSON.stringify(Object.fromEntries(vendorNames.map((n) => [n, 'fpk-vendor-' + n.replace(/[^a-z-]/g, '')])))};
+  for (var lib in vendorIds) imports[lib] = URL.createObjectURL(new Blob([src(vendorIds[lib])], { type: 'text/javascript' }));
+  // pdfjs 官方双文件内联：主模块走 importmap，模块 Worker 走 blob URL 注入
+  imports['pdfjs-dist'] = URL.createObjectURL(new Blob([src('fpk-src-pdfjs-main')], { type: 'text/javascript' }));
   var im = document.createElement('script');
   im.type = 'importmap';
   im.textContent = JSON.stringify({ imports: imports });
   document.head.appendChild(im); // 必须先于任何模块执行（探针实证 file:// 下生效）
   window.__FPK_WORKER_URL__ = urls.worker;
+  window.__FPK_PDF_WORKER_URL__ = URL.createObjectURL(new Blob([src('fpk-src-pdfjs-worker')], { type: 'text/javascript' }));
+  window.__FPK_PDF_MODULE_URL__ = imports['pdfjs-dist'];
 })();
 </script>
 <script type="module">
@@ -156,6 +198,8 @@ ${embed('fpk-src-cases', d.casesSrc)}
     core, pdfMod, officeMod, zipMod,
     wasmUrl: document.getElementById('fpk-wasm').textContent,
     workerUrl: window.__FPK_WORKER_URL__,
+    pdfModuleUrl: window.__FPK_PDF_MODULE_URL__,
+    pdfWorkerUrl: window.__FPK_PDF_WORKER_URL__,
   });
   const box = document.querySelector('#cases');
   for (const c of report.cases) {

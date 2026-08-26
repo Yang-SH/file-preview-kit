@@ -53,7 +53,7 @@ node --experimental-strip-types packages/core/examples/node-ssr/smoke.ts
 # 浏览器全功能验证台（21 项断言：全格式 + 安全 + Worker + 缓存）
 # ① 静态伺服版（importmap + CDN 重库）：
 node packages/core/examples/browser/serve.mjs   # → http://localhost:4173/packages/core/examples/browser/verify-all.html
-# ② 离线单文件版（双击直接打开，file:// 协议，重库仍需 CDN 联网）：
+# ② 离线单文件版（双击直接打开，file:// 协议；全部依赖本地内联，断网可用）：
 cd packages/core && npm run verify:offline       # → examples/browser/verify-offline.html
 ```
 
