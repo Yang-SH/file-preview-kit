@@ -76,7 +76,8 @@ function findEocd(buf: Uint8Array): { cdOffset: number; cdSize: number } | null 
 }
 
 // 兜底：octet-stream 且非 zip，UTF-8 可读率高则按文本处理。
-function looksLikeText(h: Uint8Array): boolean {
+// 导出供 previewer 的 fallbackResult 文本救援复用（方案 §四「无法识别 → UTF-8 解码兜底」）。
+export function looksLikeText(h: Uint8Array): boolean {
   if (h.length === 0) return false;
   const sample = h.subarray(0, Math.min(h.length, 512));
   let printable = 0;

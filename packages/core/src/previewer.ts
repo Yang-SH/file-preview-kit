@@ -1,5 +1,5 @@
 import type { IFile, EnvAdapter, PreviewPlugin, PreviewOptions, PreviewResult, DetectResult, WorkerHandle } from './types.ts';
-import { detectFile } from './detect.ts';
+import { detectFile, looksLikeText } from './detect.ts';
 import { PreviewErrorCode, PreviewAbortError, PreviewTimeoutError } from './errors.ts';
 import { fileToCacheKey, type PreviewCache } from './cache.ts';
 
@@ -29,9 +29,15 @@ export async function runPipeline(
 ): Promise<PreviewResult> {
   const detected = await detectFile(file);
 
+  // D1 修复：插件消费「探测结论」而非可选输入字段 file.mimeType。
+  // fileFromNode 不填 mimeType（fileFromBrowser 的 Blob.type 也可能为空），
+  // 若直传原始 file，image 等插件会把 dataUrl 误标 octet-stream 且丢失尺寸。
+  // 探测优先级 magic ?? declared ?? extension 已在 detectFile 内收敛，此处统一富化。
+  const routed: IFile = { ...file, mimeType: detected.mimeType };
+
   // 0) 大小护栏：先于任何插件，防 office 插件整文件 arrayBuffer() 爆内存
-  if (file.size > (opts.maxBytes ?? 100 * 1024 * 1024)) {
-    return fallbackResult(file, detected, PreviewErrorCode.TOO_LARGE, env);
+  if (routed.size > (opts.maxBytes ?? 100 * 1024 * 1024)) {
+    return fallbackResult(routed, detected, PreviewErrorCode.TOO_LARGE, env);
   }
 
   // 1) 默认超时合并到 signal（防坏/恶意文件挂起主线程或 Worker）
@@ -44,7 +50,7 @@ export async function runPipeline(
 
   for (const { p } of matches) {
     try {
-      const r = await p.preview(file, env, { ...opts, signal });
+      const r = await p.preview(routed, env, { ...opts, signal });
       if (r.kind !== 'error') return r;
     } catch (e) {
       if (signal.aborted) {
@@ -54,7 +60,7 @@ export async function runPipeline(
       env.log?.('error', `[preview] plugin ${p.id} failed`, e);
     }
   }
-  return fallbackResult(file, detected, PreviewErrorCode.UNSUPPORTED, env);
+  return fallbackResult(routed, detected, PreviewErrorCode.UNSUPPORTED, env);
 }
 
 export class Previewer {
@@ -147,6 +153,12 @@ export class Previewer {
 async function fallbackResult(file: IFile, detected: DetectResult, code: string, env: EnvAdapter): Promise<PreviewResult> {
   try {
     const head = await file.readRange(0, 64 * 1024);
+    // D3 修复：仅「无插件可处理」（UNSUPPORTED）时文本救援优先于 hexdump
+    // （方案 §四「无法识别 → 尝试 UTF-8 解码」）。
+    // 注意不得拦截 ERR_TOO_LARGE——§16 契约中该码本身即调用方分支依据（降级元数据/十六进制）。
+    if (code === PreviewErrorCode.UNSUPPORTED && looksLikeText(head)) {
+      return { kind: 'text', text: new TextDecoder('utf-8', { fatal: false }).decode(head) };
+    }
     return {
       kind: 'binary',
       hexDump: generateHexDump(head),

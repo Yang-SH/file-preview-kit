@@ -100,11 +100,24 @@ describe('璋冨害鍣ㄥ error 缁撴灉鐨勮矾鐢辫涔?', () => {
     const a = staticPlugin('a', 200, errResult);
     const b = staticPlugin('b', 100, errResult);
 
-    const r = await runPipeline(memFile('any.txt', utf8('data')), nodeAdapter, {}, [a, b]);
+    // 非 UTF-8 文本样本（NUL 开头）：不触发 D3 文本救援，锁定 binary+code 契约
+    const r = await runPipeline(memFile('any.bin', Uint8Array.from([0x00, 0x01, 0x02, 0x03])), nodeAdapter, {}, [a, b]);
 
     expect(r.kind).toBe('binary');
     if (r.kind !== 'binary') return;
     expect(r.info?.code).toBe(PreviewErrorCode.UNSUPPORTED);
+  });
+
+  it('all plugins error + readable utf-8 -> D3 rescue yields text (better than hexdump)', async () => {
+    const errResult = (): PreviewResult => ({ kind: 'error', code: PreviewErrorCode.PARSE, message: 'x' });
+    const a = staticPlugin('a', 200, errResult);
+    const b = staticPlugin('b', 100, errResult);
+
+    const r = await runPipeline(memFile('any.txt', utf8('data')), nodeAdapter, {}, [a, b]);
+
+    expect(r.kind).toBe('text');
+    if (r.kind !== 'text') return;
+    expect(r.text).toBe('data');
   });
 });
 

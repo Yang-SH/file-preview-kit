@@ -47,13 +47,15 @@ describe('golden-file · image/png', () => {
     expect(r.height).toBe(1);
   });
 
-  it('logo.png（无提示）→ 当前契约：mime 回退 octet-stream，kind 仍为 image', async () => {
-    // 现状固化：image.ts 从 file.mimeType 取 MIME（探测结果未传入插件）；
-    // 若后续增强为消费 DetectResult.mimeType，本用例随实现一并更新。
+  it('logo.png（无提示）→ D1 修复后消费探测结论：dataUrl 为 image/png', async () => {
+    // D1 修复（previewer 以 detected.mimeType 富化 routed file）落地，
+    // 按本用例原注释的约定同步更新：裸 IFile 也能得到正确 MIME。
     const r = await previewer.preview(memFile('logo.png', readFixture(EXAMPLE_FIXTURES, 'logo.png')), nodeAdapter);
     expect(r.kind).toBe('image');
     if (r.kind !== 'image') return;
-    expect(r.dataUrl).toMatch(/^data:application\/octet-stream;base64,/);
+    expect(r.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(r.mimeType).toBe('image/png');
+    expect(r.width).toBe(1);
   });
 });
 
