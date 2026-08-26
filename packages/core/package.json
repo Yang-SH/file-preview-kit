@@ -53,6 +53,7 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node --experimental-strip-types examples/node-ssr/smoke.ts",
     "verify:browser": "node examples/browser/verify.mjs",
+    "verify:offline": "node examples/browser/build-standalone.mjs",
     "check:size": "node scripts/check-size.mjs",
     "prepack": "node ../../scripts/apply-publish-manifest.mjs apply",
     "postpack": "node ../../scripts/apply-publish-manifest.mjs restore"
