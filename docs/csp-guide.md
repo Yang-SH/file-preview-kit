@@ -89,9 +89,9 @@ const env = createBrowserEnv({
 
 零构建场景同理：把 `dist/browser.js`、`dist/worker.js` 与上述 pdfjs 资源一起放在同一 CDN 目录，kit 内部按 `import.meta.url` 相对解析 `./assets/`（方案 §14 的 `CDN_BASE` 模式），同源托管后 CSP 收敛为场景 B 即可。
 
-## 四、前瞻：WASM 插件（mediainfo.js）的 CSP 预留
+## 四、WASM 插件（mediainfo.js）的 CSP 要求
 
-媒体元数据插件（方案 §5.6，尚未合入）将引入 `MediaInfoModule.wasm`。WASM 编译受 `script-src` 管控，届时需追加：
+媒体元数据插件（方案 §5.6，**已合入**：core 内置 `src/plugins/media.ts`，随默认插件集提供）引入 `MediaInfoModule.wasm`。WASM 编译受 `script-src` 管控，需追加：
 
 ```http
   script-src 'self' 'wasm-unsafe-eval';
@@ -108,3 +108,33 @@ wasm 文件本体经 `fetch` 加载（`env.loadWasm`），走 `connect-src`；�
 - [ ] `script-src` 含 CDN 域（零构建场景）；自托管后仅 `'self'`
 - [ ] `connect-src` 含 CDN 域（pdfjs 标准字体；自托管后仅 `'self'`）
 - [ ] CDN 返回 `Access-Control-Allow-Origin`（若未自托管）
+
+## 六、零构建部署的依赖解析（import map）
+
+`dist/browser.js` 打包的是插件**逻辑**；重解析库在运行时以裸说明符动态导入：`fast-xml-parser`（xml）、`fflate`（zip）、`pdfjs-dist`（pdf）、`mammoth` / `exceljs`（office）、`emailjs-mime-parser`(eml)、`mediainfo.js`（wasm）、`sanitize-html`（仅 Node）。纯静态托管下浏览器无法解析裸说明符，对应格式预览会**优雅降级**为 `text` / `binary`（不报错）。两种解锁方式：
+
+1. **import map**（推荐，零产物改动）——页面里先于模块脚本声明：
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "fast-xml-parser": "/assets/vendor/fast-xml-parser.min.js",
+    "fflate": "/assets/vendor/fflate.esm.js",
+    "mediainfo.js": "/assets/vendor/mediainfo/index.js"
+  }
+}
+</script>
+```
+
+2. **vendor 同目录**：将库文件与 `browser.js` 一同部署并改写为相对导入——`examples/browser/build-standalone.mjs` 生成的离线单文件页即该模式的现成产物，其 vendor 清单可直接参考。
+
+能力对照：
+
+| 格式 | 纯 dist 静态托管 | import map / vendor 后 |
+| --- | --- | --- |
+| 图片 / 文本 / JSON / CSV / Markdown | ✅ 完整（依赖已随包 chunk 化） | ✅ 完整 |
+| XML 结构化 | ⚠️ 优雅降级 text | ✅ 完整 |
+| ZIP / PDF / DOCX / XLSX / PPTX / EML / 媒体元数据 | ⚠️ 优雅降级 text / binary | ✅ 完整 |
+
+> 注：降级行为由候选链与文本救援保证（见 `previewer.ts` fallbackResult），不会抛出未处理异常。
