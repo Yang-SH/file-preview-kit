@@ -24,11 +24,12 @@ export interface FileTreeNode {
 
 // 统一预览结果：解析层不碰 DOM、不拼最终 HTML。
 export type PreviewResult =
-  | { kind: 'html'; html: string; title?: string }
+  | { kind: 'html'; html: string; title?: string; totalPages?: number; renderedPages?: number }
+  | { kind: 'text'; text: string; language?: string }
   | { kind: 'text'; text: string; language?: string }
   | { kind: 'image'; dataUrl: string; width?: number; height?: number; mimeType?: string }
   | { kind: 'media'; mediaType: 'video' | 'audio'; src?: string; mimeType?: string; metadata?: Record<string, unknown> }
-  | { kind: 'table'; columns: string[]; rows: unknown[][]; sheetName?: string }
+  | { kind: 'table'; columns: string[]; rows: unknown[][]; sheetName?: string; sheetTotal?: number }
   | { kind: 'tree'; nodes: FileTreeNode[] }
   | { kind: 'json'; data: unknown }
   | { kind: 'binary'; hexDump?: string; info?: Record<string, unknown> }
@@ -85,4 +86,22 @@ export interface PreviewPlugin {
   test(ctx: DetectResult): number;
   /** opts 可省略：插件内部对 onProgress 等做空安全访问（直接调用插件的调用方可能不传） */
   preview(file: IFile, env: EnvAdapter, opts?: PreviewOptions): Promise<PreviewResult>;
+  /**
+   * 可选：为缩略图 API（G2 两档首发）提供该格式的封面图。
+   * v1 约定：image 输出缩小图；pdf 输出首页 canvas 图；未实现或失败的插件由
+   * createThumbnailer 统一落「回退文字卡」，调用方无需感知各格式差异。
+   */
+  thumbnail?(file: IFile, env: EnvAdapter, req?: ThumbnailRequest): Promise<ThumbnailResult>;
 }
+
+// ── 缩略图契约（G2 两档首发：图片缩小 / PDF 首页；其余格式回退文字卡）──
+export interface ThumbnailRequest {
+  /** 缩略图最长边上限（等比缩小），浏览器 canvas 路径生效；无 canvas 环境可能原样透传 */
+  maxWidth?: number;
+  maxHeight?: number;
+}
+
+/** via='image'：真实封面图；via='fallback-card'：格式图标＋文件名＋大小的文字卡 */
+export type ThumbnailResult =
+  | { via: 'image'; dataUrl: string; width?: number; height?: number; mimeType?: string }
+  | { via: 'fallback-card'; formatFamily: string; icon: string; name: string; size: number };

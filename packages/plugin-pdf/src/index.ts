@@ -1,4 +1,4 @@
-import type { PreviewPlugin, DetectResult, IFile, EnvAdapter, PreviewOptions, PreviewResult } from '@file-preview/core';
+import type { PreviewPlugin, DetectResult, IFile, EnvAdapter, PreviewOptions, PreviewResult, ThumbnailRequest, ThumbnailResult } from '@file-preview/core';
 import { PreviewErrorCode } from '@file-preview/core';
 
 // PDF 预览插件（方案 §5.2 / §9 plugin-pdf 独立包）：
@@ -7,9 +7,36 @@ import { PreviewErrorCode } from '@file-preview/core';
 // - Node：pdfjs 提取每页文本 → kind 'text'（不渲染，避开 canvas 依赖）。
 // 重依赖 pdfjs-dist 动态 import（不进主包，方案 §9）；worker/module/fonts URL 由 env.getAssetUrl 注入。
 // runsInWorker:false —— pdfjs 自管 Worker，不应再被裹进「核心统一派发 Worker」（避免 Worker 嵌套）。
-const MAX_PREVIEW_PAGES = 3;
+//
+// G1 数据透明版：maxPages 可配（默认 3），结果元数据携带 totalPages/renderedPages，
+// 翻页 UI 由调用方依据元数据自建——库保持「给数据不管交互」的渲染层哲学。
+export interface PdfPluginOptions {
+  /** 浏览器 canvas 渲染的页数上限；Node 文本提取不受此限（内容级完整阅读） */
+  maxPages?: number;
+  /**
+   * G7：内置文案可注入（默认中文）。覆盖渲染层图注、标题与 Node 文本页头。
+   * 函数式模板——调用方接 i18n 框架或返回任意语言文案。
+   */
+  messages?: PdfMessages;
+}
 
-export function pdfPlugin(): PreviewPlugin {
+export interface PdfMessages {
+  figcaptionPage?: (index: number, totalPages: number) => string;
+  nodePageHeader?: (index: number, totalPages: number) => string;
+  titlePreview?: (name: string, rendered: number, total: number) => string;
+}
+
+const DEFAULT_PDF_MESSAGES: Required<PdfMessages> = {
+  figcaptionPage: (i, total) => `第 ${i} 页`,
+  nodePageHeader: (i, total) => `—— 第 ${i} 页 ——`,
+  titlePreview: (name, rendered, total) => `${name}（预览前 ${rendered}/${total} 页）`,
+};
+
+const DEFAULT_MAX_PAGES = 3;
+
+export function pdfPlugin(options: PdfPluginOptions = {}): PreviewPlugin {
+  const maxPages = Math.max(1, options.maxPages ?? DEFAULT_MAX_PAGES);
+  const msg: Required<PdfMessages> = { ...DEFAULT_PDF_MESSAGES, ...(options.messages ?? {}) };
   return {
     id: 'pdf',
     contractVersion: 1,
@@ -21,8 +48,18 @@ export function pdfPlugin(): PreviewPlugin {
     },
     async preview(file: IFile, env: EnvAdapter, opts?: PreviewOptions): Promise<PreviewResult> {
       try {
+        // D2 同源修复：扩展名/MIME 可伪造，解析前以 %PDF- 魔数自证；不符交还候选链。
+        const head = await file.header(8);
+        const magic = new TextDecoder('latin1').decode(head);
+        if (!magic.startsWith('%PDF-')) {
+          return {
+            kind: 'error',
+            code: PreviewErrorCode.PARSE,
+            message: `pdf magic mismatch: ${JSON.stringify(magic.slice(0, 5))}`,
+          };
+        }
         const inBrowser = typeof document !== 'undefined' && typeof window !== 'undefined';
-        return inBrowser ? await renderInBrowser(file, env, opts) : await extractInNode(file, opts);
+        return inBrowser ? await renderInBrowser(file, env, opts, maxPages, msg) : await extractInNode(file, opts, msg);
       } catch (e) {
         return {
           kind: 'error',
@@ -30,6 +67,31 @@ export function pdfPlugin(): PreviewPlugin {
           message: `pdf parse failed: ${(e as Error).message}`,
         };
       }
+    },
+    /** G2：PDF 首页缩略图——浏览器 canvas 小尺寸渲染；Node 无 canvas，抛错交由 thumbnailer 落回退卡。 */
+    async thumbnail(file: IFile, env: EnvAdapter, req?: ThumbnailRequest): Promise<ThumbnailResult> {
+      if (typeof document === 'undefined') throw new Error('pdf thumbnail requires browser canvas');
+      const pdfjs = await loadPdfjs(env);
+      const fontsUrl = env.getAssetUrl?.('pdf.fonts');
+      const data = await file.arrayBuffer();
+      const params: Record<string, unknown> = { data, isEvalSupported: false };
+      if (fontsUrl) params.standardFontDataUrl = fontsUrl;
+      const doc = await pdfjs.getDocument(params).promise;
+      const page = await doc.getPage(1);
+      const base = page.getViewport({ scale: 1 });
+      // 等比适配请求上限（默认 320），scale 下限保护避免过小
+      const maxW = req?.maxWidth ?? 320;
+      const maxH = req?.maxHeight ?? 320;
+      const scale = Math.min(1, maxW / base.width, maxH / base.height);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2d canvas context unavailable');
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const dataUrl = canvas.toDataURL('image/png');
+      return { via: 'image', dataUrl, width: canvas.width, height: canvas.height, mimeType: 'image/png' };
     },
   };
 }
@@ -42,7 +104,13 @@ async function loadPdfjs(env: EnvAdapter): Promise<any> {
   return pdfjs;
 }
 
-async function renderInBrowser(file: IFile, env: EnvAdapter, opts?: PreviewOptions): Promise<PreviewResult> {
+async function renderInBrowser(
+  file: IFile,
+  env: EnvAdapter,
+  opts: PreviewOptions | undefined,
+  maxPages: number,
+  msg: Required<PdfMessages>,
+): Promise<PreviewResult> {
   const pdfjs = await loadPdfjs(env);
   const fontsUrl = env.getAssetUrl?.('pdf.fonts');
   const data = await file.arrayBuffer();
@@ -50,7 +118,7 @@ async function renderInBrowser(file: IFile, env: EnvAdapter, opts?: PreviewOptio
   if (fontsUrl) params.standardFontDataUrl = fontsUrl;
 
   const doc = await pdfjs.getDocument(params).promise;
-  const n = Math.min(doc.numPages, MAX_PREVIEW_PAGES);
+  const n = Math.min(doc.numPages, maxPages);
   const pages: string[] = [];
   for (let i = 1; i <= n; i++) {
     const page = await doc.getPage(i);
@@ -61,24 +129,81 @@ async function renderInBrowser(file: IFile, env: EnvAdapter, opts?: PreviewOptio
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2d canvas context unavailable');
     await page.render({ canvasContext: ctx, viewport }).promise;
-    pages.push(canvas.toDataURL('image/png'));
+    const src = canvas.toDataURL('image/png');
+
+    // G6：静态文本层 overlay——透明 span 绝对定位在 canvas 上，
+    // 原生 Ctrl+F 可检索、文字可选中复制；纯渲染期计算，无运行时状态。
+    let layerHtml = '';
+    try {
+      const tc = await page.getTextContent();
+      layerHtml = buildTextLayerSpans(tc.items as any[], viewport.transform, viewport.width, viewport.height);
+    } catch {
+      // 文本层失败不影响页面图（如扫描版无文本）
+    }
+
+    const caption = msg.figcaptionPage(i, doc.numPages);
+    pages.push(
+      `<figure class="fpk-pdf-page" style="position:relative;margin:0">` +
+      `<img src="${src}" alt="${escapeAttrPdf(caption)}" />` +
+      (layerHtml ? `<div class="fpk-pdf-textlayer">${layerHtml}</div>` : '') +
+      `<figcaption>${escapeAttrPdf(caption)}</figcaption></figure>`,
+    );
     opts?.onProgress?.({ phase: `pdf:${i}`, loaded: i, total: n });
     page.cleanup();
   }
 
   const html =
     `<div class="fpk-pdf">` +
-    pages
-      .map(
-        (src, idx) =>
-          `<figure class="fpk-pdf-page"><img src="${src}" alt="第 ${idx + 1} 页" /><figcaption>第 ${idx + 1} 页</figcaption></figure>`,
-      )
-      .join('') +
+    pages.join('') +
     `</div>`;
-  return { kind: 'html', html, title: `${file.name}（预览前 ${n}/${doc.numPages} 页）` };
+  // G1 数据透明：调用方据 totalPages/renderedPages 自建「查看全部 N 页」或分页控件
+  return { kind: 'html', html, title: msg.titlePreview(file.name, n, doc.numPages), totalPages: doc.numPages, renderedPages: n };
 }
 
-async function extractInNode(file: IFile, opts?: PreviewOptions): Promise<PreviewResult> {
+/** HTML 属性转义（文本层 span 的 str 与 alt 使用）。 */
+function escapeAttrPdf(s: string): string {
+  return s.replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]!);
+}
+
+/**
+ * G6 纯函数：pdfjs 文本内容 → 绝对定位透明 span 云。
+ * 坐标系：viewport.transform × item.transform 得设备像素坐标，相对画布原尺寸绝对定位；
+ * 容器（fpk-pdf-textlayer）与画布同尺寸，随图片缩放由调用方 CSS 负责。
+ * 导出仅为可测性——消费方请走 pdfPlugin()。
+ */
+export function buildTextLayerSpans(
+  items: Array<{ str: string; transform: number[]; width: number; height: number }>,
+  viewportTransform: number[],
+  viewportWidth: number,
+  viewportHeight: number,
+): string {
+  const mul = (a: number[], b: number[]): number[] => [
+    a[0] * b[0] + a[2] * b[1],
+    a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3],
+    a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4],
+    a[1] * b[4] + a[3] * b[5] + a[5],
+  ];
+  const out: string[] = [];
+  for (const it of items) {
+    if (!it.str) continue;
+    const tx = mul(viewportTransform, it.transform);
+    const fontHeight = Math.hypot(tx[2], tx[3]);
+    if (!(fontHeight > 0)) continue;
+    const left = tx[4];
+    const top = tx[5] - fontHeight;
+    if (left < -viewportWidth || top < -viewportHeight || left > viewportWidth * 2 || top > viewportHeight * 2) continue;
+    const style =
+      `position:absolute;left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;` +
+      `font-size:${fontHeight.toFixed(2)}px;line-height:${fontHeight.toFixed(2)}px;` +
+      `white-space:pre;transform-origin:0 0;color:transparent;cursor:text;`;
+    out.push(`<span style="${style}">${escapeAttrPdf(it.str)}</span>`);
+  }
+  return out.join('');
+}
+
+async function extractInNode(file: IFile, opts: PreviewOptions | undefined, msg: Required<PdfMessages>): Promise<PreviewResult> {
   // node:module 在部分 @types/node 下被解析为 export= 形式，解构 createRequire 会类型报错，故显式断言。
   const nodeModule = (await import('node:module')) as unknown as {
     createRequire: (url: string) => NodeRequire;
@@ -133,7 +258,7 @@ async function extractInNode(file: IFile, opts?: PreviewOptions): Promise<Previe
     const page = await doc.getPage(i);
     const tc = await page.getTextContent();
     const text = tc.items.map((it: any) => ('str' in it ? it.str : '')).join(' ');
-    lines.push(`—— 第 ${i} 页 ——\n${text}`);
+    lines.push(`${msg.nodePageHeader(i, n)}\n${text}`);
     opts?.onProgress?.({ phase: `pdf:${i}`, loaded: i, total: n });
   }
   return { kind: 'text', text: lines.join('\n\n'), language: 'pdf' };

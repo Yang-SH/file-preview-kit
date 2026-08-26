@@ -19,6 +19,9 @@ Thumbs.db
 packages/core/examples/browser/verify-offline.html
 packages/core/examples/browser/demo-offline.html
 
+# 本地生成的浏览器 E2E harness（gen-browser-harness.mjs 产物）
+packages/core/tests/e2e/browser-e2e.html
+
 # 本地验证产物（e2e/浏览器截图证据；fixtures 资产除外）
 *-all-pass.png
 /fpk-e2e-*.png

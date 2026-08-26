@@ -21,7 +21,8 @@ export function render(result: PreviewResult, container: HTMLElement, env: EnvAd
       break;
     case 'iframe': {
       const f = document.createElement('iframe');
-      f.sandbox.value = (result.sandbox ?? ['allow-same-origin']).join(' ');
+      // setAttribute 形式等价规范语义，且兼容无 sandbox 属性反射的环境
+      f.setAttribute('sandbox', (result.sandbox ?? ['allow-same-origin']).join(' '));
       f.srcdoc = env.sanitize(result.srcdoc ?? '');
       f.style.width = '100%';
       f.style.height = '100%';
@@ -30,9 +31,13 @@ export function render(result: PreviewResult, container: HTMLElement, env: EnvAd
       break;
     }
     case 'image': {
+      // G5/G11：稳定类名供调用方 CSS 挂钩（缩放/旋转配方见 README）；lazy/decoding 利好列表与长页
       const img = document.createElement('img');
+      img.className = 'fpk-image';
       img.src = result.dataUrl;
       img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
       if (result.width) img.width = result.width;
       if (result.height) img.height = result.height;
       container.appendChild(img);
@@ -49,6 +54,7 @@ export function render(result: PreviewResult, container: HTMLElement, env: EnvAd
     case 'media': {
       const el = document.createElement(result.mediaType);
       if (result.src) el.src = result.src;
+      el.setAttribute('controls', ''); // G11：原生控制条（播放/音量）缺省可用
       container.appendChild(el);
       if (result.metadata) {
         const pre = document.createElement('pre');
@@ -95,7 +101,8 @@ export function renderToHtml(result: PreviewResult, env: EnvAdapter): string {
     case 'text':
       return `<pre class="fp-text">${escapeHtml(result.text)}</pre>`;
     case 'image':
-      return `<img src="${result.dataUrl}" alt="" />`;
+      // G5/G11：同 DOM 分支——稳定类名 + lazy/decoding；交互配方见 README「宿主职责」
+      return `<img class="fpk-image" src="${result.dataUrl}" alt="" loading="lazy" decoding="async" />`;
     case 'table':
       return tableToHtml(result.columns, result.rows);
     case 'media':

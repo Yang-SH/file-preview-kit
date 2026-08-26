@@ -24,6 +24,9 @@ export type { PreviewerOptions } from './previewer.ts';
 export type { PreviewCache } from './cache.ts';
 
 export { createLruCache, fileToCacheKey } from './cache.ts';
+export { createThumbnailer } from './thumbnailer.ts';
+export type { Thumbnailer, ThumbnailerOptions } from './thumbnailer.ts';
+export type { ThumbnailRequest, ThumbnailResult } from './types.ts';
 
 export { render, renderToHtml } from './render.ts';
 

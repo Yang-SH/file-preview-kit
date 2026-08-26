@@ -25,7 +25,15 @@ function candidateOrder(file: IFile): OfficeKind[] {
   return ['xlsx', 'docx', 'pptx'];
 }
 
-export function officePlugin(): PreviewPlugin {
+/** G8：office 插件选项——xlsx 工作表选择与行数预算；其余格式忽略。 */
+export interface OfficePluginOptions {
+  /** xlsx 工作表：1-based 序号或名称；默认第 1 个 */
+  sheet?: number | string;
+  /** xlsx 单表最大读取行数（含表头行）；默认 1000 */
+  maxRows?: number;
+}
+
+export function officePlugin(options: OfficePluginOptions = {}): PreviewPlugin {
   return {
     id: 'office',
     contractVersion: 1,
@@ -43,7 +51,7 @@ export function officePlugin(): PreviewPlugin {
       for (const kind of candidateOrder(file)) {
         const r =
           kind === 'docx' ? await previewDocx(file, opts)
-          : kind === 'xlsx' ? await previewXlsx(file, opts)
+          : kind === 'xlsx' ? await previewXlsx(file, opts, options)
           : await previewPptx(file, opts);
         if (r.kind !== 'error') return r;
         last = r;
@@ -66,19 +74,25 @@ async function previewDocx(file: IFile, opts?: PreviewOptions): Promise<PreviewR
   }
 }
 
-async function previewXlsx(file: IFile, opts?: PreviewOptions): Promise<PreviewResult> {
+async function previewXlsx(file: IFile, opts?: PreviewOptions, pluginOpts?: OfficePluginOptions): Promise<PreviewResult> {
   try {
     const ExcelJS = (await import('exceljs')).default;
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(await file.arrayBuffer());
-    const ws = wb.worksheets[0];
-    if (!ws) return { kind: 'error', code: PreviewErrorCode.PARSE, message: 'xlsx has no worksheet' };
-    const rows = ws.getRows(1, Math.min(ws.rowCount || 0, 1000)) ?? [];
+    // G8：工作表可按 1-based 序号或名称选择；越界/未命中 → PARSE 错误交还候选链
+    const sel = pluginOpts?.sheet ?? 1;
+    const ws = typeof sel === 'number'
+      ? wb.worksheets[sel - 1]
+      : wb.getWorksheet(sel);
+    if (!ws) return { kind: 'error', code: PreviewErrorCode.PARSE, message: `xlsx worksheet not found: ${sel}` };
+    const maxRows = Math.max(1, pluginOpts?.maxRows ?? 1000);
+    const rows = ws.getRows(1, Math.min(ws.rowCount || 0, maxRows)) ?? [];
     const first = (rows[0]?.values ?? []) as unknown[];
     const columns = first.slice(1).map((c) => String(c ?? ''));
     const dataRows = rows.slice(1).map((r) => (r.values as unknown[]).slice(1));
     opts?.onProgress?.({ phase: 'xlsx', loaded: file.size, total: file.size });
-    return { kind: 'table', columns, rows: dataRows, sheetName: ws.name };
+    // G8 数据透明：sheetTotal 让调用方知道还有多少表，配合 sheet 参数自建切换器
+    return { kind: 'table', columns, rows: dataRows, sheetName: ws.name, sheetTotal: wb.worksheets.length };
   } catch (e) {
     return { kind: 'error', code: PreviewErrorCode.PARSE, message: `xlsx parse failed: ${(e as Error).message}` };
   }
