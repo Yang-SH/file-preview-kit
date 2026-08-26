@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
+    "build:browser-package": "node scripts/build-offline-browser-package.mjs",
     "test:e2e": "npm run build --workspaces --if-present && vitest run packages/core/tests/e2e && echo \"[e2e] Node 接缝完成；浏览器接缝请伺服 packages/core 后打开 /tests/e2e/browser-e2e.html（先运行：node packages/core/tests/e2e/gen-browser-harness.mjs）\"",
     "smoke": "node --experimental-strip-types packages/core/examples/node-ssr/smoke.ts",
     "changeset": "changeset",

@@ -25,3 +25,7 @@ packages/core/tests/e2e/browser-e2e.html
 # æœ¬åœ°éªŒè¯äº§ç‰©ï¼ˆe2e/æµè§ˆå™¨æˆªå›¾è¯æ®ï¼›fixtures èµ„äº§é™¤å¤–ï¼‰
 *-all-pass.png
 /fpk-e2e-*.png
+
+# ÀëÏßä¯ÀÀÆ÷°ü²úÎï£¨¹¹½¨Æ÷Éú³É£©
+packages/core/dist-offline-browser/
+/*.zip
