@@ -656,3 +656,28 @@ TEXT/JSON/BINARY/IMAGE/CACHE/XLSX/PDF/WORKER/ZIP/BOMB 十场景全过   SMOKE_EX
 #### 复验结论
 
 C3 分包在公共接缝层面**零偏差**达成验收标准与 §9 结构要求；两条上游已知边界均有明确触发条件且不影响文档化契约。todo C3 验收三项 + 方案 §9 六项要求全部实证通过。
+
+---
+
+## 十七、2026-08-26 发布形态缺陷修复（publishConfig 替换失效 → prepack 清单替换）
+
+### 17.1 缺陷（P1 发布干跑发现，探针实证）
+
+npm@11.13.0 实测 **publishConfig 的 files/exports 字段替换不生效**（`npm pack` 与 `npm publish --dry-run` 双探针一致）：四包发布形态均为顶层 main/exports→`./src/index.ts` + `files:[]` 回退 .gitignore 规则——tarball 内是 src/tsconfig/tsup 而非 dist，且 exports 指向未打包路径。**若按此发布，四个包全部不可消费。**
+
+### 17.2 修复
+
+- 新增根 `scripts/apply-publish-manifest.mjs`：apply 态把各包 `publishConfig` 整体应用到顶层字段（exports/main/types/files…）并移除 publishConfig 键；restore 态从 `.fpk-publish-bak.json` 复原。幂等（残留备份先复位再应用）。
+- 四包接入生命周期钩子：`"prepack": "… apply"` / `"postpack": "… restore"`（npm 生命周期全工具链可靠，不依赖 npm 版本行为）。
+
+### 17.3 验证证据
+
+| 门 | 结果 |
+|---|---|
+| `npm publish --dry-run` ×4 | 全部 dist-only（core 24 文件 / 三插件各 7 文件），src/tsconfig/tsup **零泄漏** |
+| 真实 `npm pack` 解包核验（plugin-pdf） | tgz 内 exports→`./dist/index.js|index.cjs|index.d.ts`、files=[dist]、publishConfig 已移除 |
+| postpack 复原 | `git status` 仅剩预期修改，无打包残留 |
+
+### 17.4 结论
+
+发布链路自此真实可用：`npm run release`（build→changeset publish）产出的 tarball 即正确形态。版本治理 P1 剩余仅 npm 凭据与实际发布动作。

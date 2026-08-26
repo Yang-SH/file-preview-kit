@@ -30,7 +30,9 @@
     "sideEffects":  false,
     "scripts":  {
                     "build":  "tsup",
-                    "typecheck":  "tsc --noEmit"
+                    "typecheck":  "tsc --noEmit",
+                    "prepack":  "node ../../scripts/apply-publish-manifest.mjs apply",
+                    "postpack":  "node ../../scripts/apply-publish-manifest.mjs restore"
                 },
     "dependencies":  {
                          "mammoth":  "^1.9.0",
