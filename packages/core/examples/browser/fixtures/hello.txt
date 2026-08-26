@@ -1,0 +1,2 @@
+Hello file-preview-kit!
+第二行中文测试。

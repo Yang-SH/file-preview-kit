@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden-file · office/docx > sample.docx → kind:html，段落文本完整 > docx-golden-html 1`] = `"<p>Hello DOCX golden</p><p>第二段中文段落</p>"`;

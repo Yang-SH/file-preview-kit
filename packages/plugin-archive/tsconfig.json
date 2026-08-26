@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "files": ["../core/src/sanitize-html.d.ts", "../core/src/types/emailjs-mime-parser.d.ts"],
+  "include": ["src"]
+}

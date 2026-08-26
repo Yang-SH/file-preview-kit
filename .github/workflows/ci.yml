@@ -1,0 +1,48 @@
+# file-preview-kit CI（方案 §12 / todo C2）：
+# 串联 类型检查 → vitest（含 sanitize/炸弹/错误码/golden-file/build-clean 回归）→ 构建 →
+# Node 冒烟 → dist 生产路径探针 → 体积预算卡点。
+# 体积超限或任一门失败即 CI 失败（PR 触发，防产物膨胀）。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Unit / regression tests (vitest, includes build-clean gate)
+        run: npm test
+
+      - name: Build (ESM/CJS/DTS)
+        run: npm run build --workspaces --if-present
+
+      - name: Node smoke (end-to-end, strip-types)
+        run: npm run smoke
+
+      - name: Dist production-path probe
+        working-directory: packages/core
+        run: node examples/node-ssr/probe-dist.mjs
+
+      - name: Size budget gate (方案 §12)
+        working-directory: packages/core
+        run: npm run check:size

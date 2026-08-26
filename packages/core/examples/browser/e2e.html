@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>file-preview-kit · Playwright 真实浏览器实证</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 1.5rem; max-width: 900px; }
+      h1 { font-size: 1.2rem; }
+      section { margin: 1rem 0; padding: .75rem; border: 1px solid #ddd; border-radius: 8px; }
+      file-preview { display: block; height: 160px; }
+      #pdf-out { height: 420px; }
+      .pass { color: #0a7d32; font-weight: 600; margin: .25rem 0; }
+      .fail { color: #c62828; font-weight: 600; margin: .25rem 0; }
+      pre { white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>&lt;file-preview&gt; 真实浏览器实证（Chromium）</h1>
+    <div id="results"></div>
+
+    <section>
+      <strong>A · Web Component 默认链路（dispatch:'worker'）</strong>
+      <file-preview id="wc"></file-preview>
+    </section>
+
+    <section>
+      <strong>C · PDF canvas 渲染（本地 pdfjs-dist，主线程直调插件）</strong>
+      <div id="pdf-out"></div>
+    </section>
+
+    <!-- 零构建入口：导入即注册 <file-preview>（与 index.html 同一产物） -->
+    <script type="module" src="/packages/core/dist/browser.js"></script>
+
+    <script type="module">
+      const E2E = { sections: {}, logs: [], startedAt: Date.now() };
+      window.__E2E__ = E2E;
+
+      function record(name, pass, detail) {
+        E2E.sections[name] = { pass, detail: String(detail).slice(0, 300) };
+        const div = document.createElement('div');
+        div.className = pass ? 'pass' : 'fail';
+        div.textContent = `${pass ? 'PASS' : 'FAIL'} · ${name} — ${String(detail).slice(0, 200)}`;
+        document.getElementById('results').appendChild(div);
+      }
+
+      // ---- fixtures（与 smoke/vitest 同源）----
+      function b64ToBytes(b64) {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+      }
+      function makePng() {
+        return b64ToBytes('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAEnNCcKAAAAAElFTkSuQmCC');
+      }
+      function makePdf() {
+        const objs = [];
+        objs[1] = '<</Type/Catalog/Pages 2 0 R>>';
+        objs[2] = '<</Type/Pages/Kids[3 0 R]/Count 1>>';
+        objs[3] = '<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>';
+        const stream = 'BT /F1 12 Tf 50 150 Td (Hello PDF Browser Canvas) Tj ET';
+        objs[4] = `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`;
+        objs[5] = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>';
+        let pdf = '%PDF-1.4\n';
+        const offsets = [0];
+        for (let i = 1; i <= 5; i++) {
+          offsets[i] = pdf.length;
+          pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+        }
+        const xrefStart = pdf.length;
+        pdf += 'xref\n0 6\n0000000000 65535 f \n';
+        for (let i = 1; i <= 5; i++) pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+        pdf += `trailer\n<</Size 6/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF`;
+        return new TextEncoder().encode(pdf);
+      }
+
+      const CORE_URL = '/packages/core/dist/index.js';
+      const WORKER_URL = '/packages/core/dist/worker.js';
+      const PDFJS_BUILD = '/node_modules/pdfjs-dist/build/';
+
+      // ---- A · Web Component（内部自带 dispatch:'worker' 的 previewer）----
+      async function sectionA() {
+        const name = 'A · <file-preview> 文本预览（真实 File，含中文）';
+        try {
+          const wc = document.getElementById('wc');
+          const bytes = new TextEncoder().encode('hello real browser\n第二行中文测试');
+          const file = new File([bytes], 'e2e.txt', { type: 'text/plain' });
+          await wc.preview(file);
+          const pre = wc.shadowRoot?.querySelector('pre.fp-pre');
+          const text = pre?.textContent ?? '';
+          const ok = text.includes('hello real browser') && text.includes('第二行中文测试');
+          record(name, ok, `shadowDOM pre = ${JSON.stringify(text.slice(0, 40))}`);
+        } catch (e) {
+          record(name, false, e?.message ?? String(e));
+        }
+      }
+
+      // ---- B · 原始 Worker 协议探针：直接 postMessage 给 dist/worker.js ----
+      async function sectionB() {
+        const name = 'B · 核心统一派发 Worker（模块 Worker 真实运行）';
+        try {
+          const result = await new Promise((resolve, reject) => {
+            const w = new Worker(WORKER_URL, { type: 'module' });
+            const timer = setTimeout(() => reject(new Error('worker probe timeout (15s)')), 15000);
+            const bytes = new TextEncoder().encode('worker probe 你好');
+            const blob = new Blob([bytes], { type: 'text/plain' });
+            w.onmessage = (ev) => {
+              clearTimeout(timer);
+              resolve({ data: ev.data, hadWorker: true });
+              w.terminate();
+            };
+            w.onerror = (e) => {
+              clearTimeout(timer);
+              reject(new Error(e.message || 'worker error'));
+            };
+            w.postMessage({ id: 1, name: 'probe.txt', size: blob.size, mimeType: 'text/plain', blob, opts: {} });
+          });
+          const r = result.data?.result;
+          const ok = result.data?.id === 1 && r?.kind === 'text' && r.text.includes('worker probe 你好');
+          record(name, ok, `response.id=${result.data?.id} kind=${r?.kind} text=${JSON.stringify(r?.text?.slice(0, 30))}`);
+        } catch (e) {
+          record(name, false, e?.message ?? String(e));
+        }
+      }
+
+      // ---- B2 · Previewer dispatch:'worker' 全链路（含静默回退取证）----
+      async function sectionB2() {
+        const name = 'B2 · createPreviewer(dispatch:worker) PNG 经 Worker 预览';
+        try {
+          const { createPreviewer, createBrowserEnv, fileFromBrowser, corePlugins } = await import(CORE_URL);
+          const logs = [];
+          const env = createBrowserEnv({ log: (level, msg, err) => logs.push(`[${level}] ${msg}${err ? ' :: ' + (err?.message ?? err) : ''}`) });
+          const pv = createPreviewer({ plugins: corePlugins(), dispatch: 'worker', workerUrl: WORKER_URL });
+          const f = await fileFromBrowser(new Blob([makePng()], { type: 'image/png' }), 'dot.png', 'png');
+          const t0 = performance.now();
+          const r = await pv.preview(f, env);
+          const ms = Math.round(performance.now() - t0);
+          pv.terminate();
+          const fellBack = logs.some((l) => l.includes('fallback to main thread'));
+          const ok = r.kind === 'image' && r.width === 1 && !fellBack;
+          record(name, ok, `kind=${r.kind} ${r.width}x${r.height} ${ms}ms 回退=${fellBack} logs=${JSON.stringify(logs)}`);
+        } catch (e) {
+          record(name, false, e?.message ?? String(e));
+        }
+      }
+
+      // ---- C · PDF canvas 渲染（本地 pdfjs，零外网依赖）----
+      async function sectionC() {
+        const name = 'C · PDF 浏览器 canvas 渲染（pdfjs 本地资源）';
+        try {
+          const { createPreviewer, createBrowserEnv, fileFromBrowser, corePlugins, render } = await import(CORE_URL);
+          const env = createBrowserEnv({
+            pdfModuleUrl: `${PDFJS_BUILD}pdf.min.mjs`,
+            pdfWorkerUrl: `${PDFJS_BUILD}pdf.worker.min.mjs`,
+            pdfFontsUrl: '/node_modules/pdfjs-dist/standard_fonts/',
+            log: (level, msg, err) => E2E.logs.push(`[${level}] ${msg}${err ? ' :: ' + (err?.message ?? err) : ''}`),
+          });
+          const pv = createPreviewer({ plugins: corePlugins(), dispatch: 'main' }); // pdf 自管 Worker，主线程直调
+          const f = await fileFromBrowser(new Blob([makePdf()], { type: 'application/pdf' }), 'doc.pdf', 'pdf');
+          const t0 = performance.now();
+          const r = await pv.preview(f, env);
+          const ms = Math.round(performance.now() - t0);
+          if (r.kind !== 'html') {
+            record(name, false, `kind=${r.kind} ${JSON.stringify(r).slice(0, 160)}`);
+            return;
+          }
+          const imgCount = (r.html.match(/<img src="data:image\/png;base64,/g) || []).length;
+          // 走正式渲染路径（含 env.sanitize 唯一清理点），供截图取证
+          render(r, document.getElementById('pdf-out'), env);
+          const domImgs = document.querySelectorAll('#pdf-out img').length;
+          const ok = imgCount >= 1 && domImgs >= 1;
+          record(name, ok, `pages=${imgCount} DOM imgs=${domImgs} html.len=${r.html.length} ${ms}ms title=${JSON.stringify(r.title ?? '')}`);
+        } catch (e) {
+          record(name, false, e?.message ?? String(e));
+        }
+      }
+
+      // ---- 顺序执行 ----
+      try {
+        await sectionA();
+        await sectionB();
+        await sectionB2();
+        await sectionC();
+      } catch (e) {
+        record('runner', false, e?.message ?? String(e));
+      }
+      E2E.done = true;
+    </script>
+  </body>
+</html>

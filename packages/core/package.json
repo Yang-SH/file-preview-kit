@@ -1,0 +1,76 @@
+{
+  "name": "@file-preview/core",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Isomorphic file-preview core: streaming IFile, detect, plugin router, env adapter, render",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./browser": {
+      "types": "./src/browser.ts",
+      "import": "./src/browser.ts"
+    },
+    "./worker": {
+      "types": "./src/worker.ts",
+      "import": "./src/worker.ts"
+    }
+  },
+  "publishConfig": {
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./browser": {
+        "types": "./dist/browser.d.ts",
+        "import": "./dist/browser.js"
+      },
+      "./worker": {
+        "types": "./dist/worker.d.ts",
+        "import": "./dist/worker.js"
+      }
+    }
+  },
+  "sideEffects": [
+    "./dist/browser.js",
+    "./src/browser.ts"
+  ],
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node --experimental-strip-types examples/node-ssr/smoke.ts",
+    "verify:browser": "node examples/browser/verify.mjs",
+    "check:size": "node scripts/check-size.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.4",
+    "emailjs-mime-parser": "^2.0.7",
+    "fast-xml-parser": "5.11.0",
+    "mediainfo.js": "0.3.1",
+    "sanitize-html": "^2.14.0"
+  },
+  "devDependencies": {
+    "@file-preview/plugin-archive": "*",
+    "@file-preview/plugin-office": "*",
+    "@file-preview/plugin-pdf": "*",
+    "@types/node": "^22.10.2",
+    "jsdom": "^25.0.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  },
+  "license": "MIT",
+  "contractVersion": 1
+}

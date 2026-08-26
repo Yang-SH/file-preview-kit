@@ -1,0 +1,5 @@
+# 仓库内统一 LF；工作区按各端 autocrlf。二进制资产显式声明。
+* text=auto
+*.png binary
+*.pdf binary
+*.zip binary

@@ -1,0 +1,51 @@
+{
+    "name":  "@file-preview/plugin-office",
+    "version":  "0.2.0",
+    "type":  "module",
+    "description":  "Office (docx/xlsx/pptx) preview plugin for @file-preview/core",
+    "main":  "./src/index.ts",
+    "types":  "./src/index.ts",
+    "exports":  {
+                    ".":  {
+                              "types":  "./src/index.ts",
+                              "import":  "./src/index.ts",
+                              "default":  "./src/index.ts"
+                          }
+                },
+    "publishConfig":  {
+                          "main":  "./dist/index.cjs",
+                          "module":  "./dist/index.js",
+                          "types":  "./dist/index.d.ts",
+                          "exports":  {
+                                          ".":  {
+                                                    "types":  "./dist/index.d.ts",
+                                                    "import":  "./dist/index.js",
+                                                    "require":  "./dist/index.cjs"
+                                                }
+                                      },
+                          "files":  [
+                                        "dist"
+                                    ]
+                      },
+    "sideEffects":  false,
+    "scripts":  {
+                    "build":  "tsup",
+                    "typecheck":  "tsc --noEmit"
+                },
+    "dependencies":  {
+                         "mammoth":  "^1.9.0",
+                         "exceljs":  "^4.4.0",
+                         "fflate":  "^0.8.2"
+                     },
+    "peerDependencies":  {
+                             "@file-preview/core":  "^0.2.0"
+                         },
+    "devDependencies":  {
+                            "@file-preview/core":  "*",
+                            "@types/node":  "^22.10.2",
+                            "tsup":  "^8.3.5",
+                            "typescript":  "^5.7.2"
+                        },
+    "license":  "MIT",
+    "contractVersion":  1
+}

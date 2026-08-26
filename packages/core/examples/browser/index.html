@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>file-preview-kit · 零构建示例</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; }
+      file-preview { display: block; height: 60vh; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>&lt;file-preview&gt; 零构建预览</h1>
+    <p>引入构建产物后，下方自定义元素即可工作（需先 <code>npm run build</code> 生成 dist/browser.js）。</p>
+
+    <!-- 声明式 -->
+    <file-preview>
+      <input type="file" slot="input" />
+    </file-preview>
+
+    <!-- 编程式 -->
+    <input type="file" id="f" />
+    <file-preview id="pv"></file-preview>
+    <script type="module">
+      const pv = document.getElementById('pv');
+      document.getElementById('f').addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        if (file) await pv.preview(file);
+      });
+    </script>
+
+    <!-- 本地构建产物（CDN 形式把 src 换成托管地址） -->
+    <script type="module" src="../../dist/browser.js"></script>
+  </body>
+</html>

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>file-preview-kit · 真机实证（Playwright）</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; }
+      file-preview { display: block; height: 40vh; border: 1px solid #ddd; border-radius: 8px; padding: 1rem; }
+      #pdfbox { min-height: 220px; border: 1px dashed #bbb; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+      #pdfbox img { max-width: 240px; margin-right: 8px; }
+      .ok { color: #0a7d32; } .fail { color: #c62828; }
+      table { border-collapse: collapse; margin-top: 1rem; }
+      td, th { border: 1px solid #ccc; padding: 4px 10px; font-size: 13px; text-align: left; }
+    </style>
+  </head>
+  <body>
+    <h1>file-preview-kit · 真机实证</h1>
+
+    <h2>A. &lt;file-preview&gt; Web Component（真实 DOM + 默认 Worker 派发）</h2>
+    <file-preview id="pv"></file-preview>
+
+    <h2>B. PDF canvas 渲染（本地 pdfjs 资产，主线程分支）</h2>
+    <div id="pdfbox"></div>
+
+    <h2>C. 断言结果</h2>
+    <table id="results"></table>
+    <p id="status">running…</p>
+
+    <script type="module">
+      import {
+        createPreviewer,
+        createBrowserEnv,
+        fileFromBrowser,
+        corePlugins,
+        defaultWorkerUrl,
+      } from '../../dist/index.js';
+      import '../../dist/browser.js'; // 副作用：注册 <file-preview>
+
+      const R = {};
+      window.__VERIFY__ = { results: R, done: false, errors: [] };
+      window.addEventListener('error', (e) => window.__VERIFY__.errors.push(String(e.message)));
+      window.addEventListener('unhandledrejection', (e) => window.__VERIFY__.errors.push(String(e.reason)));
+
+      function assert(name, ok, detail = '') {
+        R[name] = { ok, detail: String(detail).slice(0, 200) };
+        const tb = document.getElementById('results');
+        const row = tb.insertRow();
+        row.innerHTML = `<td class="${ok ? 'ok' : 'fail'}">${ok ? 'PASS' : 'FAIL'}</td><td>${name}</td><td>${String(detail).slice(0, 120)}</td>`;
+      }
+
+      // 本地 pdfjs 资产（零 CDN 依赖；生产场景由 browser.ts 注入 CDN URL）
+      const envLocal = createBrowserEnv({
+        pdfModuleUrl: '/node_modules/pdfjs-dist/build/pdf.min.mjs',
+        pdfWorkerUrl: '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs',
+        pdfFontsUrl: '/node_modules/pdfjs-dist/standard_fonts/',
+      });
+
+      const workerWarns = [];
+      const envWorker = createBrowserEnv({
+        log: (level, msg) => {
+          if (level !== 'info') workerWarns.push(msg);
+        },
+      });
+
+      const pvMain = createPreviewer({ plugins: corePlugins(), dispatch: 'main' });
+      const pvWorker = createPreviewer({ plugins: corePlugins(), dispatch: 'worker', workerUrl: defaultWorkerUrl });
+      assert('worker-url-resolves', defaultWorkerUrl.includes('/dist/worker.js'), defaultWorkerUrl);
+
+      async function loadFixture(name) {
+        const res = await fetch(`fixtures/${name}`);
+        if (!res.ok) throw new Error(`fixture ${name}: HTTP ${res.status}`);
+        return fileFromBrowser(await res.blob(), name);
+      }
+
+      try {
+        // ---- 1) Worker vs 主线程 一致性（真实 Worker 派发路径）----
+        for (const name of ['hello.txt', 'logo.png', 'sample.zip']) {
+          const rM = await pvMain.preview(await loadFixture(name), envLocal);
+          const rW = await pvWorker.preview(await loadFixture(name), envWorker);
+          const same = JSON.stringify(rM) === JSON.stringify(rW);
+          assert(`worker-consistency:${name}`, same && rW.kind === rM.kind, `kind=${rM.kind}/${rW.kind}`);
+          if (name === 'sample.zip') {
+            const tree = rM;
+            assert(
+              'zip-tree-roots',
+              tree.kind === 'tree' && tree.nodes.length === 2,
+              tree.kind === 'tree' ? JSON.stringify(tree.nodes.map((n) => n.name)) : `kind=${tree.kind}`,
+            );
+          }
+          if (name === 'hello.txt') {
+            assert('text-cjk-intact', rM.kind === 'text' && rM.text.includes('第二行中文测试'), rM.text?.slice(0, 30));
+          }
+        }
+        assert('no-worker-fallback-warnings', workerWarns.length === 0, workerWarns.join(' | '));
+
+        // ---- 2) WC 真实 DOM 渲染（内部默认走 Worker 派发）----
+        const wcFile = new File([new TextEncoder().encode('Hello file-preview-kit!\n第二行中文测试。')], 'hello.txt', {
+          type: 'text/plain',
+        });
+        await document.getElementById('pv').preview(wcFile);
+        await new Promise((r) => setTimeout(r, 100));
+        const shadowText =
+          document.getElementById('pv').shadowRoot.querySelector('.fp-pre, .fp-text')?.textContent ?? '';
+        assert('wc-shadow-dom-text', shadowText.includes('第二行中文测试'), shadowText.slice(0, 30));
+
+        // ---- 3) PDF canvas 渲染（pdfjs 自管 Worker → 主线程出 PNG dataURL）----
+        const rPdf = await pvMain.preview(await loadFixture('hello.pdf'), envLocal);
+        const imgs = rPdf.kind === 'html' ? (rPdf.html.match(/fpk-pdf-page/g) || []).length : 0;
+        const isPngData = rPdf.kind === 'html' && rPdf.html.includes('<img src="data:image/png;base64,');
+        assert('pdf-canvas-pages', rPdf.kind === 'html' && imgs >= 1, `pages=${imgs} kind=${rPdf.kind}`);
+        assert('pdf-png-dataurl', isPngData, 'data:image/png;base64 present');
+
+        // PDF 结果可视化（供截图留档）
+        const box = document.getElementById('pdfbox');
+        const { render } = await import('../../dist/index.js');
+        render(rPdf, box, envLocal);
+      } catch (e) {
+        assert('unexpected-exception', false, e?.stack || e);
+      }
+
+      window.__VERIFY__.done = true;
+      document.getElementById('status').textContent =
+        'DONE · pass=' + Object.values(R).filter((r) => r.ok).length + ' fail=' + Object.values(R).filter((r) => !r.ok).length;
+    </script>
+  </body>
+</html>
