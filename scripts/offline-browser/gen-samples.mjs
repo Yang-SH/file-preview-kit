@@ -1,4 +1,4 @@
-// 离线浏览器包验证样例生成：pdf/zip/eml/wav/xlsx → dist-offline-browser/s.*
+// 离线浏览器包验证样例生成（无音频版）：pdf/zip/eml/xlsx → dist-offline-browser/s.*
 // 用法：npm run build:browser-package 之后，node scripts/offline-browser/gen-samples.mjs
 import { writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -32,21 +32,11 @@ writeFileSync(`${dir}/s.zip`, zipSync({ 'a.txt': strToU8('hello'), 'd/b.txt': st
 // eml
 writeFileSync(`${dir}/s.eml`, 'From: a@b.c\r\nTo: d@e.f\r\nSubject: hi\r\nContent-Type: text/plain\r\n\r\noffline eml body');
 
-// wav
-const w = new Uint8Array(44 + 32);
-const dv = new DataView(w.buffer);
-const W = (o, s) => { for (let i = 0; i < s.length; i++) w[o + i] = s.charCodeAt(i); };
-W(0, 'RIFF'); dv.setUint32(4, 36 + 32, true); W(8, 'WAVE');
-W(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
-dv.setUint32(24, 8000, true); dv.setUint32(28, 16000, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
-W(36, 'data'); dv.setUint32(40, 32, true);
-writeFileSync(`${dir}/s.wav`, w);
-
 // xlsx 两表
 const wb = new ExcelJS.Workbook();
 const s1 = wb.addWorksheet('Alpha'); s1.addRow(['N', 'V']); s1.addRow(['x', 1]);
 const s2 = wb.addWorksheet('Beta'); s2.addRow(['M']); s2.addRow(['y']);
 wb.xlsx.writeBuffer().then((b) => {
   writeFileSync(`${dir}/s.xlsx`, new Uint8Array(b));
-  console.log('[gen-samples] done:', ['s.pdf', 's.zip', 's.eml', 's.wav', 's.xlsx'].map((f) => `${dir}/${f}`).join(', '));
+  console.log('[gen-samples] done:', ['s.pdf', 's.zip', 's.eml', 's.xlsx'].map((f) => `${dir}/${f}`).join(', '));
 });

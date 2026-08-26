@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, 'packages/core/dist-offline-browser');
 const entry = join(root, 'scripts/offline-browser/entry.ts');
-const wasmFile = join(root, 'node_modules/mediainfo.js/dist/MediaInfoModule.wasm');
 
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
@@ -28,13 +27,8 @@ const common = {
   minify: true,
   legalComments: 'none',
   logLevel: 'warning',
-  loader: { '.wasm': 'base64' },
   define: { 'process.env.NODE_ENV': '"production"' },
   external: nodeExternals,
-  alias: {
-    // mediainfo.js 的 exports 未暴露 wasm 子路径，直指磁盘文件
-    'mediainfo.js/dist/MediaInfoModule.wasm': wasmFile,
-  },
 };
 
 console.log('[offline] building IIFE → fpk.browser.js');
@@ -116,10 +110,13 @@ import { createDefaultPreviewer, createBrowserEnv, fileFromBrowser, render } fro
 \`\`\`
 > ESM 文件需经 http(s) 或打包器引入；file:// 场景请用上面的全局脚本形态。
 
-## 能力矩阵（离线全量）
+## 能力矩阵
 
-图片 / 文本 / Markdown / JSON / CSV / XML / PDF(canvas 前 N 页+可检索文本层) /
-DOCX / XLSX(可选表) / PPTX / ZIP(炸弹防御) / EML / 音视频元数据(wasm 内联) / 十六进制兜底。
+图片 / 文本 / Markdown / JSON / CSV / XML / EML / PDF(canvas 前 N 页+可检索文本层) /
+DOCX / XLSX(可选表) / PPTX / ZIP(炸弹防御) / 十六进制兜底。
+
+**本包不含音频/视频元数据**（media 插件与 mediainfo WASM 未打包）：\`.wav/.mp4\` 等
+音视频文件会降级为十六进制卡片；如需播放，可直接用原生 \`<audio>/<video>\` 标签指向文件源。
 
 ## 与 npm 包的差异
 
@@ -127,8 +124,8 @@ DOCX / XLSX(可选表) / PPTX / ZIP(炸弹防御) / EML / 音视频元数据(was
 | --- | --- | --- |
 | Worker 派发 | 主线程（无独立 worker 文件） | 支持 dispatch:'worker' |
 | pdfjs 资源 | 内联主线程模式 | CDN/自托管注入 |
-| mediainfo wasm | base64 内联 Blob | getAssetUrl 注入 |
-| 体积 | 单文件 ~4-7MB | 按需分包 |
+| 音频/视频元数据 | ❌ 不含（media 插件未打包） | ✅ mediainfo WASM |
+| 体积 | 单文件 ~4.4MB | 按需分包 |
 
 其余 API 与 npm 包完全一致（createPreviewer/corePlugins/thumbnailer/render…）。
 `;
