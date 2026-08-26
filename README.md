@@ -1,89 +1,157 @@
 # file-preview-kit
 
-同构文件预览组件库（monorepo）。核心思路：**同构核心 + 环境适配层 + 插件式解析器 + 统一结果模型 + 双渲染器**。
+[![CI](https://github.com/Yang-SH/file-preview-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/Yang-SH/file-preview-kit/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+![Core entry size](https://img.shields.io/badge/core%20gzip-96.5%20kB-blue)
 
-完整设计见 [`项目方案.md`](./项目方案.md)。
+**English** | [简体中文](./README.zh-CN.md)
 
-## 包结构
+An isomorphic file preview library for browser and Node.js: streaming file input, content sniffing, plugin-based parsing, a unified result model and dual renderers — with security hardening built in.
 
-| 包 | 说明 |
+> Design spec & verification reports: [`项目方案.md`](./项目方案.md) (Chinese) · [`packages/core/TDD-REPORT.md`](./packages/core/TDD-REPORT.md).
+
+## Features
+
+- **Isomorphic core** — the same pipeline runs in browsers and Node.js (`IFile` streaming reads, `maxBytes` guard, merged timeout/AbortSignal, LRU cache).
+- **Plugin architecture** — priority-based routing (`test() → number`), compose only what you need.
+- **Unified result model** — every parser returns one of `image / text / json / table / html / media / tree / binary / error`.
+- **Security first** — a single sanitize hook for all HTML output, DOCTYPE-stripping XXE hardening, four-threshold zip-bomb defense, stable error codes.
+- **Zero-build friendly** — a `<script type="module">` Web Component entry ships the full default set; heavy libraries stay behind dynamic imports.
+- **Fully offline capable** — a self-contained single-file demo page can be generated; no CDN or server required at runtime.
+
+## Packages
+
+| Package | Description |
 | --- | --- |
-| `@file-preview/core` | 同构核心：流式 `IFile`、类型探测、插件路由、环境适配、渲染层。内置轻量插件集：`image` / `text` / `markdown` / `csv` / `xml`(XXE 加固) / `media`(mediainfo.js WASM 音视频元数据) / `email`(eml 结构化预览)。 |
-| `@file-preview/plugin-pdf` | PDF 预览（pdfjs-dist 按需加载；浏览器渲染 PNG 页面 / Node 提取文本）。**已拆分独立包（C3）**。 |
-| `@file-preview/plugin-office` | Office 三件套 docx·xlsx·pptx（mammoth / exceljs + fflate 抽取 pptx 文本）。**已拆分独立包（C3）**。 |
-| `@file-preview/plugin-archive` | zip 及炸弹四阈值防御（fflate）。**已拆分独立包（C3）**。 |
-| `@file-preview/browser` | （规划中）零构建 CDN 包：core + 默认插件集 + Web Component `<file-preview>`。当前由 core 的 `/browser` 零构建入口承担。 |
+| [`@file-preview/core`](./packages/core) | Isomorphic core: streaming `IFile`, detection, routing, env adapters, rendering. Ships lightweight plugins: `image`, `text`, `markdown`, `csv`, `xml` (XXE hardened), `media` (mediainfo.js WASM), `email` (eml). |
+| [`@file-preview/plugin-pdf`](./packages/plugin-pdf) | PDF preview (pdfjs-dist; canvas pages in browser, text extraction in Node). |
+| [`@file-preview/plugin-office`](./packages/plugin-office) | Office suite docx·xlsx·pptx (mammoth / exceljs / fflate slide extraction). |
+| [`@file-preview/plugin-archive`](./packages/plugin-archive) | ZIP listing tree with four-threshold bomb defense (fflate). |
 
-### 按需组合插件
-
-core 默认集不含 pdf / office / archive 重插件，按需安装并显式组合：
+## Installation
 
 ```bash
 npm install @file-preview/core @file-preview/plugin-pdf @file-preview/plugin-office @file-preview/plugin-archive
 ```
 
+> **Status:** v0.3.0 is not yet published to npm. Until then, clone this repo and install locally:
+>
+> ```bash
+> git clone https://github.com/Yang-SH/file-preview-kit.git
+> cd file-preview-kit && npm install && npm run build --workspaces
+> ```
+
+## Quick Start
+
+### On-demand composition (recommended)
+
 ```js
-import { corePlugins, createPreviewer } from '@file-preview/core';
+import { corePlugins, createPreviewer, createBrowserEnv, fileFromBrowser } from '@file-preview/core';
 import { pdfPlugin } from '@file-preview/plugin-pdf';
 import { officePlugin } from '@file-preview/plugin-office';
 import { zipPlugin } from '@file-preview/plugin-archive';
 
-const previewer = createPreviewer([...corePlugins(), pdfPlugin(), officePlugin(), zipPlugin()]);
+const env = createBrowserEnv({
+  // Optional pdfjs asset injection for CDN drop-in scenarios (bundlers can omit these)
+  pdfModuleUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs',
+  pdfWorkerUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs',
+});
+
+const previewer = createPreviewer({
+  plugins: [...corePlugins(), pdfPlugin(), officePlugin(), zipPlugin()],
+});
+
+const file = await fileFromBrowser(new Blob([bytes], { type: 'application/pdf' }), 'doc.pdf', 'pdf');
+const result = await previewer.preview(file, env);
+// result.kind → 'image' | 'text' | 'json' | 'table' | 'html' | 'media' | 'tree' | 'binary' | 'error'
 ```
 
-> 零构建入口 `@file-preview/core/browser` 已默认组合三拆分包（单文件自带全量默认能力）；`/worker` 默认集含 office/archive，pdf 因 pdfjs 自管 Worker 而排除。
+### Zero-build browser entry
 
-## 格式支持边界
+```html
+<file-preview></file-preview>
+<script type="module" src="./node_modules/@file-preview/core/dist/browser.js"></script>
+<script type="module">
+  const el = document.querySelector('file-preview');
+  el.preview(fileInput.files[0]); // File | Blob — worker dispatch enabled by default
+</script>
+```
 
-方案 §5.7 的设计取舍（非缺陷）：
+The `/browser` entry registers the `<file-preview>` custom element with the full default set (core + pdf + office + archive) bundled in a single file.
 
-- **eml**：结构化预览（头表 + 正文 + 附件清单）。HTML-only 邮件以转义源码形式展示，不做富渲染。
-- **msg（Outlook）**：不支持，走 binary 降级（纯 JS 解析成本高，方案明令暂不覆盖）。
-- **字体（ttf/otf/woff）/ 3D 模型**：不支持结构化预览，走 binary 十六进制降级。
+### Node.js SSR
 
-## 快速验证
+```js
+import { createPreviewer, corePlugins, createNodeEnv, initNodeSanitizer, fileFromNode } from '@file-preview/core';
+const { officePlugin } = await import('@file-preview/plugin-office');
+
+await initNodeSanitizer(); // lazy-loads sanitize-html once
+const previewer = createPreviewer({ plugins: [...corePlugins(), officePlugin()] });
+
+const result = await previewer.preview(await fileFromNode('report.docx'), createNodeEnv());
+console.log(result.kind, result.html?.slice(0, 200));
+```
+
+## Supported Formats
+
+| Format | Capability | Result kind | Provided by |
+| --- | --- | --- | --- |
+| PNG / JPEG / GIF / WebP / BMP / SVG | dataURL + intrinsic size (SVG via safe `<img>`) | `image` | core |
+| TXT and code files | UTF-8 text preview | `text` | core |
+| Markdown | rendered HTML (inline HTML escaped) | `html` | core |
+| JSON | lossless parse | `json` | core |
+| CSV | header table (papaparse) | `table` | core |
+| XML | structured object + XXE hardening (fast-xml-parser) | `json` | core |
+| WAV / MP4 / … audio-video | metadata via mediainfo WASM; playback `src` in browser | `media` | core |
+| EML email | headers table + body + attachment list | `html` | core |
+| PDF | canvas pages in browser; text extraction in Node | `html` / `text` | plugin-pdf |
+| DOCX | HTML conversion (mammoth) | `html` | plugin-office |
+| XLSX | first-sheet table (exceljs) | `table` | plugin-office |
+| PPTX | slide text extraction (fflate + XML) | `html` | plugin-office |
+| ZIP | directory tree + bomb defense (fflate) | `tree` | plugin-archive |
+| Unknown / binary | hex dump fallback | `binary` | built-in |
+
+### Support boundaries (by design)
+
+- **eml**: HTML-only bodies are shown escaped-as-source, never rendered rich.
+- **msg (Outlook)**, **fonts**, **3D models**: binary fallback per the design spec.
+- PDFs relying on non-embedded CJK fonts require hosting pdfjs `standard_fonts`/cMaps yourself ([CSP guide](./docs/csp-guide.md)).
+
+## Security
+
+- **Single sanitize point** — every `html` output passes through `env.sanitize`; inject DOMPurify (browser default), sanitize-html (Node, call `initNodeSanitizer()` once), or your own implementation.
+- **XXE hardening** — DOCTYPE blocks are stripped before strict validation; entities are never expanded.
+- **Zip-bomb defense** — entry count / total uncompressed / single entry / nesting depth thresholds; violations degrade to hex dump with `ERR_TOO_LARGE`.
+- **Stable error codes** — `ERR_UNSUPPORTED / ERR_TOO_LARGE / ERR_PARSE / ERR_ABORTED / ERR_TIMEOUT`.
+- Strict CSP pages: see [`docs/csp-guide.md`](./docs/csp-guide.md) for minimal snippets covering `blob:` / `data:` resources and pdfjs workers.
+
+## Testing & Verification
 
 ```bash
-# 正式测试体系（vitest）：冒烟 9 场景固化 + sanitize XSS 回归 + 错误码回归
-npm test
-
-# Node 端到端冒烟测试（无需安装依赖，走 node --experimental-strip-types）
-node --experimental-strip-types packages/core/examples/node-ssr/smoke.ts
-
-# 浏览器全功能验证台（21 项断言：全格式 + 安全 + Worker + 缓存）
-# ① 静态伺服版（importmap + CDN 重库）：
-node packages/core/examples/browser/serve.mjs   # → http://localhost:4173/packages/core/examples/browser/verify-all.html
-# ② 离线单文件版（双击直接打开，file:// 协议；全部依赖本地内联，断网可用）：
-cd packages/core && npm run verify:offline       # 同时生成两页：
-#    examples/browser/verify-offline.html —— 21 项自动断言
-#    examples/browser/demo-offline.html   —— 交互式演示台（16 种样例一键预览 + 拖拽任意文件）
+npm test                # 125 vitest cases: smoke, sanitize XSS, error codes, golden files, build hygiene
+npm run build           # ESM/CJS/DTS for all packages
+npm run smoke           # end-to-end Node smoke (zero-install, strip-types)
+cd packages/core && npm run verify:offline   # generates two fully-offline single-file HTML pages:
+#   examples/browser/demo-offline.html    — interactive playground (16 samples + drag & drop)
+#   examples/browser/verify-offline.html  — 21 automated assertions
 ```
 
-两页共用同一份断言模块 [`verify-cases.mjs`](./packages/core/examples/browser/verify-cases.mjs)，结果暴露在 `window.__FPK_VERIFY__` 供自动化消费。
+Both offline pages run by simply double-clicking them (no server, no network); results are exposed on `window.__FPK_VERIFY__`.
 
-## 设计要点（已落进骨架）
+CI runs typecheck → vitest → build → smoke → dist probes → size budget on every push and PR.
 
-- `IFile` 流式/按需读取：`header()` / `readRange()` / `arrayBuffer()`。
-- `Previewer.preview()` 先按 `maxBytes` 护栏短路，再合并默认超时（30s）与 `AbortSignal`。
-- `EnvAdapter` 抽离 DOM/fs/WASM/Worker/sanitize；`sanitize` 是唯一清理点。
-- 错误码稳定枚举：`ERR_UNSUPPORTED / ERR_TOO_LARGE / ERR_PARSE / ERR_ABORTED / ERR_TIMEOUT`。
-- 浏览器零构建入口 `src/browser.ts`：导入即 `customElements.define('file-preview', ...)`。
+## Versioning & Release
 
-> Sanitize 默认即生产级：浏览器端 **DOMPurify**、Node 端 **sanitize-html**（入口处调用一次 `initNodeSanitizer()` 懒加载；未初始化时降级依赖-free 的 `minimalSanitize` 并告警）。也可经 `EnvOptions.sanitize` 注入自定义实现——渲染层 `env.sanitize` 始终是唯一清理点。
-> 「核心统一派发 Worker」已实现：`createPreviewer({ dispatch: 'worker', workerUrl })` 即后台解析（零构建 Web Component 默认启用）；Node 端 `spawnWorker` 返回 null → 主线程异步。
-
-## Hosting / CSP
-
-托管页若启用严格 CSP，渲染产物所需的 `blob:` / `data:` 资源与跨域 pdf.worker 会被拦截。最小可用 CSP 片段、自托管 pdfjs/worker 部署步骤见 [`docs/csp-guide.md`](./docs/csp-guide.md)。
-
-## 版本与发布（changesets）
-
-版本与 CHANGELOG 由 [changesets](https://github.com/changesets/changesets) 管理（`.changeset/`）：
+Versioning and CHANGELOGs are managed with [changesets](https://github.com/changesets/changesets):
 
 ```bash
-npx changeset            # 1) 为用户可感知的改动写一条变更记录（patch/minor/major）
-npm run version          # 2) 消费变更：生成各包 CHANGELOG.md + semver bump
-npm run release          # 3) 构建 + changeset publish（需 npm 凭据；CI 中由 changesets/action 代办）
+npx changeset      # record a user-facing change (patch/minor/major)
+npm run version    # consume changesets → semver bump + CHANGELOG
+npm run release    # build + publish (requires npm credentials; CI uses changesets/action)
 ```
 
-约定：**major** = 破坏性变更（`PreviewResult`/插件接口语义变化），受影响插件的 `contractVersion` 同步 +1 并在变更正文说明迁移方式。详见 [`.changeset/README.md`](./.changeset/README.md)。
+Convention: **major** = breaking change to `PreviewResult` or plugin interface semantics; affected plugins bump their `contractVersion` together.
+
+## License
+
+[MIT](./LICENSE) © Yang-SH
