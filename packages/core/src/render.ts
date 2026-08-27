@@ -83,6 +83,13 @@ export function render(result: PreviewResult, container: HTMLElement, env: EnvAd
       container.appendChild(pre);
       break;
     }
+    case 'error': {
+      const pre = document.createElement('pre');
+      pre.className = 'fp-error';
+      pre.textContent = `${result.message ?? '预览失败'}${result.code ? ` (${result.code})` : ''}`;
+      container.appendChild(pre);
+      break;
+    }
     default: {
       const pre = document.createElement('pre');
       pre.textContent = JSON.stringify(result, null, 2);
@@ -113,6 +120,8 @@ export function renderToHtml(result: PreviewResult, env: EnvAdapter): string {
       return `<pre class="fp-json">${escapeHtml(JSON.stringify(result.data, null, 2))}</pre>`;
     case 'binary':
       return `<pre class="fp-hex">${escapeHtml(result.hexDump ?? '')}</pre>`;
+    case 'error':
+      return `<pre class="fp-error">${escapeHtml(result.message ?? '预览失败')}${result.code ? ` (${escapeHtml(result.code)})` : ''}</pre>`;
     default:
       return `<pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>`;
   }

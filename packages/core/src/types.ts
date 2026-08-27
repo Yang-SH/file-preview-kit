@@ -49,6 +49,8 @@ export interface DetectResult {
   fileName: string;
   header: Uint8Array;
   zipHint: 'docx' | 'xlsx' | 'pptx' | 'zip' | null;
+  /** 老版 Office OLE2 复合文档（Word/Excel/PowerPoint 97–2003）：已知但本库不解析，给友好提示 */
+  legacyOffice?: 'doc' | 'xls' | 'ppt';
   isText?: boolean; // UTF-8 可读率高（兜底文本）
 }
 

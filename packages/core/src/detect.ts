@@ -75,6 +75,17 @@ function findEocd(buf: Uint8Array): { cdOffset: number; cdSize: number } | null 
   return null;
 }
 
+/** 尾部扫描 EOCD（End Of Central Directory）判定 zip：覆盖头部非 PK 的自解压/前缀包裹场景。 */
+async function hasEocdInTail(file: IFile): Promise<boolean> {
+  const tailSize = Math.min(64 * 1024, file.size);
+  if (tailSize <= 0) return false;
+  const tail = await file.readRange(file.size - tailSize, file.size);
+  return findEocd(tail) !== null;
+}
+
+const OLE2_MAGIC = [0xd0, 0xcf, 0x11, 0xe0];
+const LEGACY_OFFICE_EXT: Record<string, 'doc' | 'xls' | 'ppt'> = { doc: 'doc', xls: 'xls', ppt: 'ppt' };
+
 // 兜底：octet-stream 且非 zip，UTF-8 可读率高则按文本处理。
 // 导出供 previewer 的 fallbackResult 文本救援复用（方案 §四「无法识别 → UTF-8 解码兜底」）。
 export function looksLikeText(h: Uint8Array): boolean {
@@ -92,7 +103,13 @@ export async function detectFile(file: IFile): Promise<DetectResult> {
   const header = await file.header();
   const ext = extOf(file.name, file.extension);
   const magic = magicMime(header);
-  const isZip = magic === 'application/zip' || (header[0] === 0x50 && header[1] === 0x4b);
+  let isZip = magic === 'application/zip' || (header[0] === 0x50 && header[1] === 0x4b);
+
+  // 加固：头部非 PK 但扩展名是 zip 时，扫描尾部 EOCD 判定（自解压/前缀包裹 zip）。
+  // 仅对 .zip 扩展名做此额外 IO，避免对所有未知文件都读尾部。
+  if (!isZip && ext === 'zip') {
+    if (await hasEocdInTail(file)) isZip = true;
+  }
 
   let zipHint: DetectResult['zipHint'] = null;
   if (isZip) {
@@ -100,9 +117,18 @@ export async function detectFile(file: IFile): Promise<DetectResult> {
     zipHint = fromExt ?? (await classifyZipByContent(file));
   }
 
+  // 老版 Office OLE2 复合文档（Word/Excel/PowerPoint 97–2003）：已知但本库不支持，给友好提示。
+  let legacyOffice: DetectResult['legacyOffice'] = undefined;
+  const isOle2 =
+    header.length >= 4 &&
+    OLE2_MAGIC.every((b, i) => header[i] === b);
+  if (isOle2) {
+    legacyOffice = ext && LEGACY_OFFICE_EXT[ext] ? LEGACY_OFFICE_EXT[ext] : 'doc';
+  }
+
   const mimeFromExt = ext ? EXT_MIME[ext] : undefined;
   const mimeType = magic ?? file.mimeType ?? mimeFromExt ?? 'application/octet-stream';
   const isText = !isZip && mimeType === 'application/octet-stream' && looksLikeText(header);
 
-  return { mimeType, extension: ext, fileName: file.name, header, zipHint, isText };
+  return { mimeType, extension: ext, fileName: file.name, header, zipHint, legacyOffice, isText };
 }

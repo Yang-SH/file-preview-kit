@@ -73,6 +73,16 @@ async function degrade(file: IFile, mimeType: string, reason: string): Promise<P
 // 压缩包插件（方案 §5.4）：zip → kind:'tree'。
 // 炸弹防御根基：fflate filter 恒返 false —— 只读中央目录清单，任何条目都不解压。
 // 即便中央目录谎报 originalSize，预览路径也无解压行为，内存上界 = 输入文件本身。
+/** 定位首个本地文件头 PK\x03\x04；返回其偏移（0 表示已在偏移 0，>0 表示需剥离前缀）。 */
+function findLocalHeaderOffset(bytes: Uint8Array): number {
+  for (let i = 0; i + 4 <= bytes.length; i++) {
+    if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x03 && bytes[i + 3] === 0x04) {
+      return i;
+    }
+  }
+  return 0;
+}
+
 export function zipPlugin(limits?: ZipGuardLimits): PreviewPlugin {
   const lim = { ...DEFAULTS, ...limits };
   return {
@@ -86,10 +96,10 @@ export function zipPlugin(limits?: ZipGuardLimits): PreviewPlugin {
       const bytes = new Uint8Array(await file.arrayBuffer());
       opts?.onProgress?.({ phase: 'zip:listing', loaded: bytes.length, total: file.size });
 
-      const meta: EntryMeta[] = [];
-      try {
-        const { unzipSync } = await import('fflate');
-        unzipSync(bytes, {
+      const { unzipSync } = await import('fflate');
+      const parse = (data: Uint8Array): EntryMeta[] => {
+        const meta: EntryMeta[] = [];
+        unzipSync(data, {
           filter: (f) => {
             meta.push({
               name: f.name,
@@ -100,8 +110,23 @@ export function zipPlugin(limits?: ZipGuardLimits): PreviewPlugin {
             return false; // 永不解压
           },
         });
+        return meta;
+      };
+
+      // 前缀剥离：自解压/前缀包裹 zip 的本地文件头不在偏移 0。
+      // 先定位首个 PK\x03\x04 再决定解析起点——直接用带前缀的 buffer 会让 fflate 误读 originalSize 触发炸弹防御。
+      const off = findLocalHeaderOffset(bytes);
+      const target = off > 0 ? bytes.subarray(off) : bytes;
+
+      let meta: EntryMeta[];
+      try {
+        meta = parse(target);
       } catch (e) {
-        return { kind: 'error', code: PreviewErrorCode.PARSE, message: `zip parse failed: ${(e as Error).message}` };
+        return {
+          kind: 'error',
+          code: PreviewErrorCode.PARSE,
+          message: `无法解析该 zip 压缩包（可能加密或采用了不支持的压缩方式）：${(e as Error).message}`,
+        };
       }
 
       // 四阈值快速失败（顺序：条目数 → 总量 → 单条目 → 嵌套）

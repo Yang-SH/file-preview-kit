@@ -156,8 +156,32 @@ async function fallbackResult(file: IFile, detected: DetectResult, code: string,
     // D3 修复：仅「无插件可处理」（UNSUPPORTED）时文本救援优先于 hexdump
     // （方案 §四「无法识别 → 尝试 UTF-8 解码」）。
     // 注意不得拦截 ERR_TOO_LARGE——§16 契约中该码本身即调用方分支依据（降级元数据/十六进制）。
-    if (code === PreviewErrorCode.UNSUPPORTED && looksLikeText(head)) {
-      return { kind: 'text', text: new TextDecoder('utf-8', { fatal: false }).decode(head) };
+    if (code === PreviewErrorCode.UNSUPPORTED) {
+      // 已知但本库不支持的格式 → 友好提示，避免裸十六进制（修复 zip/doc 预览问题）。
+      if (detected.legacyOffice) {
+        const label =
+          detected.legacyOffice === 'xls'
+            ? 'Excel 97–2003 (.xls)'
+            : detected.legacyOffice === 'ppt'
+              ? 'PowerPoint 97–2003 (.ppt)'
+              : 'Word 97–2003 (.doc)';
+        return {
+          kind: 'error',
+          code: PreviewErrorCode.UNSUPPORTED,
+          message: `不支持老版 ${label} 格式，请另存为 .docx/.xlsx/.pptx 后再预览`,
+        };
+      }
+      // 已被识别为 zip 但插件解析失败（加密/不支持的压缩方式等）→ 友好提示而非十六进制。
+      if (detected.zipHint === 'zip') {
+        return {
+          kind: 'error',
+          code: PreviewErrorCode.PARSE,
+          message: '无法解析该 zip 压缩包（可能加密或采用了不支持的压缩方式），无法预览内容',
+        };
+      }
+      if (looksLikeText(head)) {
+        return { kind: 'text', text: new TextDecoder('utf-8', { fatal: false }).decode(head) };
+      }
     }
     return {
       kind: 'binary',
